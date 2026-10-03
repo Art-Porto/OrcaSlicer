@@ -591,3 +591,15 @@ TEST_CASE("Body centering survives islands merging and splitting between layers"
         }
     }
 }
+
+TEST_CASE("Z contouring slices an object that has several instances", "[PrintObject]")
+{
+    Print print;
+    Model model;
+    place_two_cube_instances_apart(10., { { "zaa_enabled", "1" } }, print, model);
+    REQUIRE(print.objects().size() == 1);
+    REQUIRE(print.objects().front()->instances().size() == 2);
+
+    CHECK_NOTHROW(print.process());
+    CHECK(print.objects().front()->is_step_done(posContouring));
+}
