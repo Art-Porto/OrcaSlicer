@@ -304,6 +304,7 @@ void GLCanvas3D::LayersEditing::set_config(const DynamicPrintConfig* config)
     m_slicing_parameters = nullptr;
     m_layers_texture.valid = false;
     m_layer_height_profile.clear();
+    m_other_textures.clear();
 }
 
 void GLCanvas3D::LayersEditing::select_object(const Model& model, int object_id)
@@ -717,42 +718,85 @@ void GLCanvas3D::LayersEditing::render_volumes(const GLCanvas3D& canvas, const G
     generate_layer_height_texture();
 
     // Uniforms were resolved, go ahead using the layer editing shader.
-    shader->set_uniform("z_to_texture_row", float(m_layers_texture.cells - 1) / (float(m_layers_texture.width) * float(m_object_max_z)));
     shader->set_uniform("z_texture_row_to_normalized", 1.0f / float(m_layers_texture.height));
     shader->set_uniform("z_cursor", float(m_object_max_z) * float(this->get_cursor_z_relative(canvas)));
     shader->set_uniform("z_cursor_band_width", float(this->band_width));
+    shader->set_uniform("projection_matrix", wxGetApp().plater()->get_camera().get_projection_matrix());
 
-    const Camera& camera = wxGetApp().plater()->get_camera();
-    shader->set_uniform("projection_matrix", camera.get_projection_matrix());
+    this->render_object_volumes(volumes, *shader, this->last_object_id, m_layers_texture, m_object_max_z);
+    // Orca: the other selected objects, each with its own layer heights.
+    for (int object_id : this->edited_object_ids())
+        if (object_id != this->last_object_id) {
+            const ObjectTexture& other = this->other_object_texture(object_id);
+            this->render_object_volumes(volumes, *shader, object_id, other.texture, other.max_z);
+        }
+    // Revert back to the previous shader.
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void GLCanvas3D::LayersEditing::render_object_volumes(const GLVolumeCollection& volumes, GLShaderProgram& shader, int object_id, const LayersTexture& texture, double object_max_z)
+{
+    shader.set_uniform("z_to_texture_row", float(texture.cells - 1) / (float(texture.width) * float(object_max_z)));
 
     // Initialize the layer height texture mapping.
-    const GLsizei w = (GLsizei)m_layers_texture.width;
-    const GLsizei h = (GLsizei)m_layers_texture.height;
+    const GLsizei w = (GLsizei)texture.width;
+    const GLsizei h = (GLsizei)texture.height;
     const GLsizei half_w = w / 2;
     const GLsizei half_h = h / 2;
     glsafe(::glPixelStorei(GL_UNPACK_ALIGNMENT, 1));
     glsafe(::glBindTexture(GL_TEXTURE_2D, m_z_texture_id));
     glsafe(::glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0));
     glsafe(::glTexImage2D(GL_TEXTURE_2D, 1, GL_RGBA, half_w, half_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0));
-    glsafe(::glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, m_layers_texture.data.data()));
-    glsafe(::glTexSubImage2D(GL_TEXTURE_2D, 1, 0, 0, half_w, half_h, GL_RGBA, GL_UNSIGNED_BYTE, m_layers_texture.data.data() + m_layers_texture.width * m_layers_texture.height * 4));
+    glsafe(::glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, texture.data.data()));
+    glsafe(::glTexSubImage2D(GL_TEXTURE_2D, 1, 0, 0, half_w, half_h, GL_RGBA, GL_UNSIGNED_BYTE, texture.data.data() + texture.width * texture.height * 4));
+
+    const Transform3d& view_matrix = wxGetApp().plater()->get_camera().get_view_matrix();
     for (GLVolume* glvolume : volumes.volumes) {
         // Render the object using the layer editing shader and texture.
-        if (!glvolume->is_active || glvolume->composite_id.object_id != this->last_object_id || glvolume->is_modifier)
+        if (!glvolume->is_active || glvolume->composite_id.object_id != object_id || glvolume->is_modifier)
             continue;
 
-        shader->set_uniform("volume_world_matrix", glvolume->world_matrix());
-        shader->set_uniform("object_max_z", 0.0f);
-        const Transform3d& view_matrix = camera.get_view_matrix();
+        shader.set_uniform("volume_world_matrix", glvolume->world_matrix());
+        shader.set_uniform("object_max_z", 0.0f);
         const Transform3d model_matrix = glvolume->world_matrix();
-        shader->set_uniform("view_model_matrix", view_matrix * model_matrix);
+        shader.set_uniform("view_model_matrix", view_matrix * model_matrix);
         const Matrix3d view_normal_matrix = view_matrix.matrix().block(0, 0, 3, 3) * model_matrix.matrix().block(0, 0, 3, 3).inverse().transpose();
-        shader->set_uniform("view_normal_matrix", view_normal_matrix);
+        shader.set_uniform("view_normal_matrix", view_normal_matrix);
 
         glvolume->render();
     }
-    // Revert back to the previous shader.
-    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+bool GLCanvas3D::LayersEditing::is_edited_object(int object_id) const
+{
+    return object_id == last_object_id || std::find(m_other_object_ids.begin(), m_other_object_ids.end(), object_id) != m_other_object_ids.end();
+}
+
+// The texture is regenerated only when the object's profile or height has changed.
+const GLCanvas3D::LayersEditing::ObjectTexture& GLCanvas3D::LayersEditing::other_object_texture(int object_id)
+{
+    const ModelObject& model_object = *m_model->objects[object_id];
+    ObjectTexture&     cached       = m_other_textures[object_id];
+    if (!cached.texture.valid || cached.max_z != model_object.max_z() || cached.model_profile != model_object.layer_height_profile.get()) {
+        cached.model_profile = model_object.layer_height_profile.get();
+        cached.max_z         = model_object.max_z();
+        const SlicingParameters slicing_parameters = this->slicing_parameters_of(model_object);
+        std::vector<double>     profile;
+        PrintObject::update_layer_height_profile(model_object, slicing_parameters, profile);
+        LayersTexture& texture = cached.texture;
+        if (texture.data.empty()) {
+            texture.width  = 1024;
+            texture.height = 1024;
+            texture.levels = 2;
+            texture.data.assign(texture.width * texture.height * 5, 0);
+        }
+        texture.cells = Slic3r::generate_layer_height_texture(
+            slicing_parameters,
+            Slic3r::generate_object_layers(slicing_parameters, profile, false),
+            texture.data.data(), texture.height, texture.width, true);
+        texture.valid = true;
+    }
+    return cached;
 }
 
 void GLCanvas3D::LayersEditing::adjust_layer_height_profile()
@@ -8942,11 +8986,10 @@ void GLCanvas3D::_render_objects(GLVolumeCollection::ERenderType type, bool with
             if (dynamic_cast<GLGizmoPainterBase*>(gm.get_current()) == nullptr)
             {
                 if (m_picking_enabled && m_layers_editing.is_enabled() && (m_layers_editing.last_object_id != -1) && (m_layers_editing.object_max_z() > 0.0f)) {
-                    int object_id = m_layers_editing.last_object_id;
                 const Camera& camera = wxGetApp().plater()->get_camera();
-                m_volumes.render(type, false, camera.get_view_matrix(), camera.get_projection_matrix(), cvn_size, [object_id](const GLVolume& volume) {
+                m_volumes.render(type, false, camera.get_view_matrix(), camera.get_projection_matrix(), cvn_size, [this](const GLVolume& volume) {
                     // Which volume to paint without the layer height profile shader?
-                    return volume.is_active && (volume.is_modifier || volume.composite_id.object_id != object_id);
+                    return volume.is_active && (volume.is_modifier || !m_layers_editing.is_edited_object(volume.composite_id.object_id));
                     });
                     m_layers_editing.render_volumes(*this, m_volumes);
                 }

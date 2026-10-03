@@ -295,6 +295,15 @@ class GLCanvas3D
             bool                valid{ false };
         };
         LayersTexture   m_layers_texture;
+        // Orca: the layer height textures of the other selected objects, each with the profile and
+        // the height it was generated from. Keyed by the index into m_model->objects.
+        struct ObjectTexture
+        {
+            LayersTexture       texture;
+            std::vector<double> model_profile;
+            double              max_z{ 0. };
+        };
+        std::map<int, ObjectTexture> m_other_textures;
 
     public:
         EState state{ Unknown };
@@ -321,6 +330,8 @@ class GLCanvas3D
         void set_config(const DynamicPrintConfig* config);
         void select_object(const Model& model, int object_id);
         void set_other_objects(std::vector<int> object_ids) { m_other_object_ids = std::move(object_ids); }
+        // Orca: whether the tool paints this object with its layer heights.
+        bool is_edited_object(int object_id) const;
 
         bool is_allowed() const;
 
@@ -349,6 +360,8 @@ class GLCanvas3D
     private:
         bool is_initialized() const;
         void generate_layer_height_texture();
+        const ObjectTexture& other_object_texture(int object_id);
+        void render_object_volumes(const GLVolumeCollection& volumes, GLShaderProgram& shader, int object_id, const LayersTexture& texture, double object_max_z);
         void render_active_object_annotations(const GLCanvas3D& canvas);
         void render_profile(const GLCanvas3D& canvas);
         void update_slicing_parameters();
