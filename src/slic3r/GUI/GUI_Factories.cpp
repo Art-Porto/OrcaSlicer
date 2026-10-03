@@ -1113,14 +1113,6 @@ void MenuFactory::append_menu_items_variable_layer_height(wxMenu* menu)
     append_menu_item(menu, wxID_ANY, _L("Paste Variable Layer Height to Selected Objects"), _L("Paste the copied variable layer height profile to selected objects"),
         [](wxCommandEvent&) { obj_list()->paste_variable_layer_height_profile_to_selection(); }, "", menu,
         []() { return obj_list()->can_paste_variable_layer_height_profile(); }, m_parent);
-
-    append_menu_item(menu, wxID_ANY, _L("Adaptive Layer Height: Each Selected Object"), _L("Give each selected object its own adaptive layer height profile"),
-        [](wxCommandEvent&) { obj_list()->apply_adaptive_layer_height_to_selection(false); }, "", menu,
-        []() { return obj_list()->can_apply_adaptive_layer_height_to_selection(false); }, m_parent);
-
-    append_menu_item(menu, wxID_ANY, _L("Adaptive Layer Height: Shared by Selected Objects"), _L("Give the selected objects one adaptive layer height profile between them, as the prime tower requires"),
-        [](wxCommandEvent&) { obj_list()->apply_adaptive_layer_height_to_selection(true); }, "", menu,
-        []() { return obj_list()->can_apply_adaptive_layer_height_to_selection(true); }, m_parent);
 }
 
 void MenuFactory::append_menu_item_change_extruder(wxMenu* menu)
