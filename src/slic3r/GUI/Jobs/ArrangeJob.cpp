@@ -5,6 +5,8 @@
 #include "libslic3r/MTUtils.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/ModelArrange.hpp"
+#include "libslic3r/ClipperUtils.hpp"
+#include "libslic3r/Print.hpp"
 
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
@@ -91,11 +93,33 @@ static WipeTower get_wipe_tower(const Plater &plater, int plate_idx)
     return WipeTower{plater.canvas3D()->get_wipe_tower_info(plate_idx)};
 }
 
+// Orca: a prime tower compacted by "No sparse layers" stays low, so the toolhead comes down beside it
+// at every tool change. Objects have to keep the toolhead radius from it, as they do from one another
+// when printing by object, so the arranger is given the tower grown by that much.
+static void grow_compacted_wipe_tower(arrangement::ArrangePolygon& ap)
+{
+    PrintConfig config;
+    config.apply(wxGetApp().preset_bundle->full_config(), true);
+    if (!config.wipe_tower_no_sparse_layers.value || ap.poly.contour.points.empty())
+        return;
+
+    const Polygons footprint = offset(ap.poly.contour, float(scale_(compacted_tower_footprint_padding(config, config.prime_tower_brim_width.value))));
+    if (footprint.empty())
+        return;
+    const CompactedTowerZone zone = compacted_wipe_tower_zone(config, footprint.front());
+    if (zone.empty())
+        return;
+    const Polygons grown = offset(zone.hull, float(scale_(zone.body_radius)), jtRound, scale_(0.1));
+    if (!grown.empty())
+        ap.poly.contour = grown.front();
+}
+
 arrangement::ArrangePolygon get_wipetower_arrange_poly(WipeTower* tower)
 {
     ArrangePolygon ap = tower->get_arrange_polygon();
     ap.bed_idx = 0;
     ap.setter = NULL; // do not move wipe tower
+    grow_compacted_wipe_tower(ap);
     return ap;
 }
 
@@ -378,6 +402,7 @@ void ArrangeJob::prepare_wipe_tower()
                 extruder_ids.insert(plate_extruders.begin(), plate_extruders.end());
             }
             wipe_tower_ap = estimate_wipe_tower_info(bedid, extruder_ids);
+            grow_compacted_wipe_tower(wipe_tower_ap);
             wipe_tower_ap.bed_idx = bedid_unlocked;
             m_unselected.emplace_back(wipe_tower_ap);
         }
