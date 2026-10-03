@@ -811,6 +811,35 @@ bool adjust_layer_series_to_align_object_height(const SlicingParameters &slicing
     return true;
 }
 
+std::vector<coordf_t> layer_height_profile_fit_to_height(
+    const std::vector<coordf_t> &layer_height_profile,
+    coordf_t                     object_height)
+{
+    assert(layer_height_profile.size() >= 2);
+    assert(layer_height_profile.size() % 2 == 0);
+    assert(layer_height_profile[0] == 0);
+    assert(object_height > EPSILON);
+
+    std::vector<coordf_t> out;
+    out.reserve(layer_height_profile.size() + 2);
+    size_t i = 0;
+    for (; i < layer_height_profile.size() && layer_height_profile[i] < object_height - EPSILON; i += 2) {
+        out.push_back(layer_height_profile[i]);
+        out.push_back(layer_height_profile[i + 1]);
+    }
+
+    // The last entry has to sit exactly at the top of the object, see PrintObject::update_layer_height_profile().
+    coordf_t height = layer_height_profile.back();
+    if (i < layer_height_profile.size()) {
+        const coordf_t z1 = layer_height_profile[i - 2];
+        const coordf_t z2 = layer_height_profile[i];
+        height = lerp(layer_height_profile[i - 1], layer_height_profile[i + 1], (object_height - z1) / (z2 - z1));
+    }
+    out.push_back(object_height);
+    out.push_back(height);
+    return out;
+}
+
 // Produce object layers as pairs of low / high layer boundaries, stored into a linear vector.
 std::vector<coordf_t> generate_object_layers(
 	const SlicingParameters 	&slicing_params,

@@ -1443,11 +1443,18 @@ void ObjectList::paste_variable_layer_height_profile_to_selection()
     if (obj_idxs.empty())
         return;
 
-    std::vector<size_t> changed_obj_idxs;
+    // A profile has to end at the top of its object, so it is fitted to each object's own height.
+    std::vector<size_t>                changed_obj_idxs;
+    std::vector<std::vector<coordf_t>> changed_profiles;
     for (int obj_idx : obj_idxs) {
         ModelObject* model_object = object(obj_idx);
-        if (model_object != nullptr && model_object->layer_height_profile.get() != m_variable_layer_height_profile_clipboard)
+        if (model_object == nullptr || model_object->max_z() <= 0.)
+            continue;
+        std::vector<coordf_t> profile = layer_height_profile_fit_to_height(m_variable_layer_height_profile_clipboard, model_object->max_z());
+        if (model_object->layer_height_profile.get() != profile) {
             changed_obj_idxs.emplace_back(size_t(obj_idx));
+            changed_profiles.emplace_back(std::move(profile));
+        }
     }
 
     if (changed_obj_idxs.empty())
@@ -1455,10 +1462,9 @@ void ObjectList::paste_variable_layer_height_profile_to_selection()
 
     take_snapshot("Paste variable layer height profile");
 
-    for (size_t obj_idx : changed_obj_idxs) {
-        ModelObject* model_object = object(int(obj_idx));
-        model_object->layer_height_profile.set(m_variable_layer_height_profile_clipboard);
-        update_info_items(obj_idx);
+    for (size_t i = 0; i < changed_obj_idxs.size(); ++i) {
+        object(int(changed_obj_idxs[i]))->layer_height_profile.set(changed_profiles[i]);
+        update_info_items(changed_obj_idxs[i]);
     }
 
     wxGetApp().plater()->changed_objects(changed_obj_idxs);
