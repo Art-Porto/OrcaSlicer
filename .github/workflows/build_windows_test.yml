@@ -27,3 +27,52 @@ jobs:
     with:
       os: windows-latest
       artifact: ${{ github.sha }}-tests-windows-x64
+  # Packs just the files that differ from the full build the tester already has, so each
+  # iteration is a small download rather than the whole portable build.
+  patch:
+    name: Pack changed files
+    needs: build_windows
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BASE_RUN: "37146072634"
+      ARTIFACT: OrcaSlicer_Windows_V2.5.0-dev_x64_portable
+    steps:
+      - name: Download the base build
+        run: gh run download "$BASE_RUN" -R "$GITHUB_REPOSITORY" -n "$ARTIFACT" -D old
+
+      - name: Download this build
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: new
+
+      - name: Collect changed files
+        run: |
+          mkdir patch
+          cd new
+          find . -type f | while IFS= read -r f; do
+            if [ ! -f "../old/$f" ] || ! cmp -s "$f" "../old/$f"; then
+              mkdir -p "../patch/$(dirname "$f")"
+              cp "$f" "../patch/$f"
+            fi
+          done
+          cd ../old
+          find . -type f | while IFS= read -r f; do
+            [ -f "../new/$f" ] || echo "$f"
+          done > ../REMOVED_FILES.txt
+          cd ..
+          cp REMOVED_FILES.txt patch/
+          echo "Changed or new files: $(find patch -type f | wc -l)"
+          echo "Removed files: $(wc -l < REMOVED_FILES.txt)"
+          du -sh patch
+          find patch -type f | sort | head -100
+
+      - name: Upload patch
+        uses: actions/upload-artifact@v7
+        with:
+          name: OrcaSlicer_patch_changed_files
+          path: patch
