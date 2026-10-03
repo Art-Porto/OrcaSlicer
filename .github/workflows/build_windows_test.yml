@@ -1,0 +1,29 @@
+name: Build Windows x64 (test)
+
+# Test-only: builds and tests Windows x64 alone on every push to this branch.
+# Lives on the test branch only and is not part of the pull request.
+on:
+  push:
+    branches:
+      - vlh-prime-tower-wintest
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build_windows:
+    name: Build Windows x64
+    uses: ./.github/workflows/build_check_cache.yml
+    with:
+      os: windows-latest
+      arch: x64
+      compiler: clang
+    secrets: inherit
+  unit_tests_windows_x64:
+    name: Windows x64
+    needs: build_windows
+    uses: ./.github/workflows/unit_tests.yml
+    with:
+      os: windows-latest
+      artifact: ${{ github.sha }}-tests-windows-x64
