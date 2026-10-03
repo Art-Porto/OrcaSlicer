@@ -2,7 +2,7 @@
 	"type": "machine_model",
 	"name": "Creality K2",
 	"model_id": "Creality_K2",
-	"nozzle_diameter": "0.2;0.4;0.6;0.8",
+	"nozzle_diameter": "0.2;0.4;0.6;0.8;1.0",
 	"machine_tech": "FFF",
 	"family": "Creality",
 	"bed_model": "creality_k2_buildplate_model.stl",
