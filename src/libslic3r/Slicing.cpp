@@ -840,6 +840,45 @@ std::vector<coordf_t> layer_height_profile_fit_to_height(
     return out;
 }
 
+std::vector<coordf_t> layer_height_profile_merge_finest(
+    const std::vector<std::vector<coordf_t>> &layer_height_profiles)
+{
+    std::vector<coordf_t> zs;
+    for (const std::vector<coordf_t> &profile : layer_height_profiles) {
+        assert(profile.size() >= 4);
+        assert(profile.size() % 2 == 0);
+        for (size_t i = 0; i < profile.size(); i += 2)
+            zs.push_back(profile[i]);
+    }
+    std::sort(zs.begin(), zs.end());
+
+    // Index of the entry each profile was last read at. The Zs only grow, so it never moves back.
+    std::vector<size_t>   cursors(layer_height_profiles.size(), 0);
+    std::vector<coordf_t> out;
+    out.reserve(zs.size() * 2);
+    for (const coordf_t z : zs) {
+        if (! out.empty() && z - out[out.size() - 2] < EPSILON)
+            continue;
+        coordf_t height = std::numeric_limits<coordf_t>::max();
+        for (size_t idx_profile = 0; idx_profile < layer_height_profiles.size(); ++idx_profile) {
+            const std::vector<coordf_t> &profile = layer_height_profiles[idx_profile];
+            if (z > profile[profile.size() - 2] + EPSILON)
+                // Above the top of this object.
+                continue;
+            const size_t end = profile.size() - 2;
+            size_t      &i   = cursors[idx_profile];
+            while (i + 2 < end && profile[i + 2] <= z)
+                i += 2;
+            height = std::min(height, i + 2 < end ?
+                lerp(profile[i + 1], profile[i + 3], (z - profile[i]) / (profile[i + 2] - profile[i])) :
+                profile[i + 1]);
+        }
+        out.push_back(z);
+        out.push_back(height);
+    }
+    return out;
+}
+
 // Produce object layers as pairs of low / high layer boundaries, stored into a linear vector.
 std::vector<coordf_t> generate_object_layers(
 	const SlicingParameters 	&slicing_params,

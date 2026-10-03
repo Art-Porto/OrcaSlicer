@@ -17,6 +17,7 @@
 #include "Tab.hpp"
 #include "wxExtensions.hpp"
 #include "libslic3r/Model.hpp"
+#include "libslic3r/Print.hpp"
 #include "GLCanvas3D.hpp"
 #include "Selection.hpp"
 #include "PartPlate.hpp"
@@ -1464,6 +1465,61 @@ void ObjectList::paste_variable_layer_height_profile_to_selection()
 
     for (size_t i = 0; i < changed_obj_idxs.size(); ++i) {
         object(int(changed_obj_idxs[i]))->layer_height_profile.set(changed_profiles[i]);
+        update_info_items(changed_obj_idxs[i]);
+    }
+
+    wxGetApp().plater()->changed_objects(changed_obj_idxs);
+}
+
+bool ObjectList::can_apply_adaptive_layer_height_to_selection(bool shared) const
+{
+    if (printer_technology() != ptFFF)
+        return false;
+
+    std::vector<int> obj_idxs;
+    get_selected_object_idxs(obj_idxs);
+    return obj_idxs.size() >= size_t(shared ? 2 : 1);
+}
+
+void ObjectList::apply_adaptive_layer_height_to_selection(bool shared)
+{
+    if (!can_apply_adaptive_layer_height_to_selection(shared))
+        return;
+
+    const DynamicPrintConfig* config = wxGetApp().plater()->config();
+    if (config == nullptr)
+        return;
+    const Vec3d shrinkage_compensation = wxGetApp().plater()->fff_print().shrinkage_compensation();
+    // The quality the variable layer height tool starts with.
+    const float quality_factor = 0.5f;
+
+    std::vector<int> obj_idxs;
+    get_selected_object_idxs(obj_idxs);
+
+    std::vector<size_t>                changed_obj_idxs;
+    std::vector<std::vector<coordf_t>> profiles;
+    for (int obj_idx : obj_idxs) {
+        const ModelObject* model_object = object(obj_idx);
+        if (model_object == nullptr || model_object->max_z() <= 0.)
+            continue;
+        const SlicingParameters slicing_params = PrintObject::slicing_parameters(*config, *model_object, float(model_object->max_z()), shrinkage_compensation);
+        changed_obj_idxs.emplace_back(size_t(obj_idx));
+        profiles.emplace_back(layer_height_profile_adaptive(slicing_params, *model_object, quality_factor));
+    }
+
+    if (changed_obj_idxs.empty())
+        return;
+
+    if (shared) {
+        const std::vector<coordf_t> merged = layer_height_profile_merge_finest(profiles);
+        for (size_t i = 0; i < changed_obj_idxs.size(); ++i)
+            profiles[i] = layer_height_profile_fit_to_height(merged, object(int(changed_obj_idxs[i]))->max_z());
+    }
+
+    take_snapshot("Apply adaptive layer height");
+
+    for (size_t i = 0; i < changed_obj_idxs.size(); ++i) {
+        object(int(changed_obj_idxs[i]))->layer_height_profile.set(profiles[i]);
         update_info_items(changed_obj_idxs[i]);
     }
 

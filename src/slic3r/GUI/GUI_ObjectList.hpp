@@ -475,6 +475,9 @@ public:
     bool can_paste_variable_layer_height_profile() const;
     void copy_variable_layer_height_profile_to_clipboard();
     void paste_variable_layer_height_profile_to_selection();
+    // shared: the selected objects get one profile between them, as the prime tower requires.
+    bool can_apply_adaptive_layer_height_to_selection(bool shared) const;
+    void apply_adaptive_layer_height_to_selection(bool shared);
     bool clipboard_is_empty() const { return m_clipboard.empty(); }
     void paste_volumes_into_list(int obj_idx, const ModelVolumePtrs& volumes);
     void paste_objects_into_list(const std::vector<size_t>& object_idxs);
