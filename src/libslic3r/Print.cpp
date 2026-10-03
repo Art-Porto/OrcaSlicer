@@ -2069,9 +2069,15 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                     const std::vector<coordf_t> &layers_tallest = layer_z_series[tallest_object_idx];
                     const coordf_t eps = 0.5 * EPSILON; // layers closer than EPSILON will be merged later. Let's make
                     // this check a bit more sensitive to make sure we never consider two different layers as one.
+                    // Orca: precise Z height fits the last layers of each object to its own height, which by
+                    // itself puts objects of different heights on different layers.
+                    const bool precise_z_height = m_objects[idx_object]->config().precise_z_height.value || m_objects[tallest_object_idx]->config().precise_z_height.value;
                     for (size_t i = 0; i < layers.size() && i < layers_tallest.size(); ++i)
                         if (std::abs(layers[i] - layers_tallest[i]) > eps)
-                            return {L("The prime tower is only supported if all objects have the same variable layer height.")};
+                            return {precise_z_height ?
+                                L("The prime tower is only supported if all objects have the same variable layer height. "
+                                  "Precise Z height fits the last layers of each object to its own height, so objects of different heights cannot share their layers while it is on.") :
+                                L("The prime tower is only supported if all objects have the same variable layer height.")};
                 }
             }
         }
