@@ -252,8 +252,7 @@ static std::string validate_two_heights_with_variable_layers(bool fit)
         { "enable_prime_tower",         "1"         },
         { "wipe_tower_x",               "50"        }, // inside the 200x200 test bed
         { "wipe_tower_y",               "50"        }, // (the default y, 220, is not)
-        { "layer_change_gcode",         "G92 E0
-" }, // validate() wants the relative-E reset
+        { "layer_change_gcode",         "G92 E0\n" }, // validate() wants the relative-E reset
         { "layer_height",               "0.2"       },
         { "initial_layer_print_height", "0.2"       },
         { "raft_layers",                "0"         } });
