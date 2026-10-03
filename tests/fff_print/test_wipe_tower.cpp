@@ -246,7 +246,7 @@ TEST_CASE("The tower is sized for the thinnest layer any object on the plate is 
 // 5 mm, thinning to 0.1 mm at 10 mm and staying there. `fit` says whether the lower box gets the
 // profile cut to its own height, or the tall box's profile as it is. Each box prints with its own
 // filament, which is what makes the tower real.
-static std::string validate_two_heights_with_variable_layers(bool fit)
+static std::string validate_two_heights_with_variable_layers(bool fit, bool precise_z_height = false)
 {
     const DynamicPrintConfig config = multifilament_config(2, {
         { "enable_prime_tower",         "1"         },
@@ -255,6 +255,7 @@ static std::string validate_two_heights_with_variable_layers(bool fit)
         { "layer_change_gcode",         "G92 E0\n" }, // validate() wants the relative-E reset
         { "layer_height",               "0.2"       },
         { "initial_layer_print_height", "0.2"       },
+        { "precise_z_height",           precise_z_height ? "1" : "0" },
         { "raft_layers",                "0"         } });
     const std::vector<std::vector<ConfigBase::SetDeserializeItem>> overrides{ { { "extruder", "1" } }, { { "extruder", "2" } } };
     const std::vector<coordf_t> profile = { 0., 0.2, 5., 0.2, 10., 0.1, 20., 0.1 };
@@ -266,12 +267,19 @@ static std::string validate_two_heights_with_variable_layers(bool fit)
     model.objects[1]->layer_height_profile.set(fit ? layer_height_profile_fit_to_height(profile, 10.) : profile);
     print.apply(model, config);
     REQUIRE(print.has_wipe_tower());
+    // Precise Z height would fit the last layers of each box to its own height.
+    REQUIRE(print.precise_z_height_overridden());
     return print.validate().string;
 }
 
 TEST_CASE("Objects of different heights keep the prime tower when they share a variable layer height profile", "[WipeTower]")
 {
     CHECK_THAT(validate_two_heights_with_variable_layers(true), !Catch::Matchers::ContainsSubstring("layer height"));
+}
+
+TEST_CASE("Precise Z height is left out when objects of different heights share their layers under the prime tower", "[WipeTower]")
+{
+    CHECK_THAT(validate_two_heights_with_variable_layers(true, true), !Catch::Matchers::ContainsSubstring("layer height"));
 }
 
 TEST_CASE("A variable layer height profile that does not end at the object's top is rejected with the prime tower", "[WipeTower]")

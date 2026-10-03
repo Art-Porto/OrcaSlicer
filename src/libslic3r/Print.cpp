@@ -1864,7 +1864,9 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
         }
     }
 
-    if (m_config.enable_prime_tower) {
+    if (m_precise_z_height_overridden)
+        warn(L("Precise Z height is not applied: with the prime tower, objects of different heights that use variable layer height have to share their layers."), "precise_z_height");
+    else if (m_config.enable_prime_tower) {
         for (const PrintObject* object : m_objects) {
             if (object->config().precise_z_height.value) {
                 warn(L("Enabling both precise Z height and the prime tower may cause slicing errors."), "precise_z_height");
@@ -1921,7 +1923,7 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
     for (size_t print_object_idx = 0; print_object_idx < m_objects.size(); ++ print_object_idx) {
         const PrintObject &print_object = *m_objects[print_object_idx];
         //FIXME It is quite expensive to generate object layers just to get the print height!
-        if (auto layers = generate_object_layers(print_object.slicing_parameters(), layer_height_profile(print_object_idx), print_object.config().precise_z_height.value);
+        if (auto layers = generate_object_layers(print_object.slicing_parameters(), layer_height_profile(print_object_idx), print_object.precise_z_height());
             !layers.empty()) {
 
             Vec3d test =this->shrinkage_compensation();
@@ -2057,7 +2059,7 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                 layer_z_series.assign(m_objects.size(), std::vector<coordf_t>());
                
                 for (size_t idx_object = 0; idx_object < m_objects.size(); ++idx_object) {
-                    layer_z_series[idx_object] = generate_object_layers(m_objects[idx_object]->slicing_parameters(), layer_height_profiles[idx_object], m_objects[idx_object]->config().precise_z_height.value);
+                    layer_z_series[idx_object] = generate_object_layers(m_objects[idx_object]->slicing_parameters(), layer_height_profiles[idx_object], m_objects[idx_object]->precise_z_height());
                 }
 
                 for (size_t idx_object = 0; idx_object < m_objects.size(); ++idx_object) {
@@ -2069,15 +2071,9 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                     const std::vector<coordf_t> &layers_tallest = layer_z_series[tallest_object_idx];
                     const coordf_t eps = 0.5 * EPSILON; // layers closer than EPSILON will be merged later. Let's make
                     // this check a bit more sensitive to make sure we never consider two different layers as one.
-                    // Orca: precise Z height fits the last layers of each object to its own height, which by
-                    // itself puts objects of different heights on different layers.
-                    const bool precise_z_height = m_objects[idx_object]->config().precise_z_height.value || m_objects[tallest_object_idx]->config().precise_z_height.value;
                     for (size_t i = 0; i < layers.size() && i < layers_tallest.size(); ++i)
                         if (std::abs(layers[i] - layers_tallest[i]) > eps)
-                            return {precise_z_height ?
-                                L("The prime tower is only supported if all objects have the same variable layer height. "
-                                  "Precise Z height fits the last layers of each object to its own height, so objects of different heights cannot share their layers while it is on.") :
-                                L("The prime tower is only supported if all objects have the same variable layer height.")};
+                            return {L("The prime tower is only supported if all objects have the same variable layer height.")};
                 }
             }
         }
