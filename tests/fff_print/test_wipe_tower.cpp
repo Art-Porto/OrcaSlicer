@@ -244,22 +244,25 @@ TEST_CASE("The tower is sized for the thinnest layer any object on the plate is 
 
 // A 20 mm and a 10 mm tall box sharing one variable layer height profile: 0.2 mm layers up to
 // 5 mm, thinning to 0.1 mm at 10 mm and staying there. `fit` says whether the lower box gets the
-// profile cut to its own height, or the tall box's profile as it is.
+// profile cut to its own height, or the tall box's profile as it is. Each box prints with its own
+// filament, which is what makes the tower real.
 static std::string validate_two_heights_with_variable_layers(bool fit)
 {
     const DynamicPrintConfig config = multifilament_config(2, {
-        { "outer_wall_filament_id",     "2"   },
-        { "enable_prime_tower",         "1"   },
-        { "wipe_tower_x",               "50"  },
-        { "wipe_tower_y",               "50"  },
-        { "layer_height",               "0.2" },
-        { "initial_layer_print_height", "0.2" },
-        { "raft_layers",                "0"   } });
+        { "enable_prime_tower",         "1"         },
+        { "wipe_tower_x",               "50"        }, // inside the 200x200 test bed
+        { "wipe_tower_y",               "50"        }, // (the default y, 220, is not)
+        { "layer_change_gcode",         "G92 E0
+" }, // validate() wants the relative-E reset
+        { "layer_height",               "0.2"       },
+        { "initial_layer_print_height", "0.2"       },
+        { "raft_layers",                "0"         } });
+    const std::vector<std::vector<ConfigBase::SetDeserializeItem>> overrides{ { { "extruder", "1" } }, { { "extruder", "2" } } };
     const std::vector<coordf_t> profile = { 0., 0.2, 5., 0.2, 10., 0.1, 20., 0.1 };
 
     Print print;
     Model model;
-    init_print({ make_cube(20, 20, 20), make_cube(20, 20, 10) }, print, model, config);
+    init_print(std::vector<TriangleMesh>{ make_cube(20, 20, 20), make_cube(20, 20, 10) }, print, model, config, &overrides);
     model.objects[0]->layer_height_profile.set(profile);
     model.objects[1]->layer_height_profile.set(fit ? layer_height_profile_fit_to_height(profile, 10.) : profile);
     print.apply(model, config);

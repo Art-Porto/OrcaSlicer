@@ -324,6 +324,7 @@ void GLCanvas3D::LayersEditing::select_object(const Model& model, int object_id)
         m_model_object = model_object_new;
         m_object_max_z = new_max_z;
     }
+    m_model = &model;
 }
 
 bool GLCanvas3D::LayersEditing::is_allowed() const
@@ -428,6 +429,14 @@ void GLCanvas3D::LayersEditing::render_variable_layer_height_dialog(GLCanvas3D& 
     ImGui::AlignTextToFramePadding();
     imgui.text(_L("Keep min"));
 
+    if (!m_other_object_ids.empty()) {
+        // Several objects are selected: by default they share one profile, which the prime tower requires.
+        imgui.bbl_checkbox("##each_separately", m_each_separately);
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        imgui.text(_L("Each object separately"));
+    }
+
     ImGui::Separator();
 
     const wxString shift = GUI::shortkey_shift_prefix();
@@ -443,7 +452,7 @@ void GLCanvas3D::LayersEditing::render_variable_layer_height_dialog(GLCanvas3D& 
     GLGizmoUtils::render_tooltip_button(&imgui, canvas, shortcuts, x, y);
 
     ImGui::SameLine();
-    imgui.disabled_begin(check_object_layers_fixed(*m_slicing_parameters, m_layer_height_profile));
+    imgui.disabled_begin(m_other_object_ids.empty() && check_object_layers_fixed(*m_slicing_parameters, m_layer_height_profile));
     if (imgui.button(_L("Reset"))) {
         wxPostEvent((wxEvtHandler*) canvas.get_wxglcanvas(), SimpleEvent(EVT_GLCANVAS_RESET_LAYER_HEIGHT_PROFILE));
     }
@@ -754,33 +763,78 @@ void GLCanvas3D::LayersEditing::adjust_layer_height_profile()
     m_layers_texture.valid = false;
 }
 
+std::vector<int> GLCanvas3D::LayersEditing::edited_object_ids() const
+{
+    std::vector<int> object_ids{ last_object_id };
+    for (int object_id : m_other_object_ids)
+        if (object_id >= 0 && object_id < int(m_model->objects.size()) && object_id != last_object_id)
+            object_ids.emplace_back(object_id);
+    return object_ids;
+}
+
+SlicingParameters GLCanvas3D::LayersEditing::slicing_parameters_of(const ModelObject& model_object) const
+{
+    return PrintObject::slicing_parameters(*m_config, model_object, float(model_object.max_z()), m_shrinkage_compensation);
+}
+
+// profiles[0] is the profile of the object shown.
+void GLCanvas3D::LayersEditing::set_profiles(GLCanvas3D& canvas, const std::vector<int>& object_ids, const std::vector<std::vector<double>>& profiles)
+{
+    for (size_t i = 0; i < object_ids.size(); ++i) {
+        m_model->objects[object_ids[i]]->layer_height_profile.set(profiles[i]);
+        wxGetApp().obj_list()->update_info_items(object_ids[i]);
+    }
+    m_layer_height_profile = profiles.front();
+    m_layers_texture.valid = false;
+    canvas.post_event(SimpleEvent(EVT_GLCANVAS_SCHEDULE_BACKGROUND_PROCESS));
+}
+
 void GLCanvas3D::LayersEditing::reset_layer_height_profile(GLCanvas3D & canvas)
 {
-    const_cast<ModelObject*>(m_model_object)->layer_height_profile.clear();
+    for (int object_id : this->edited_object_ids()) {
+        m_model->objects[object_id]->layer_height_profile.clear();
+        wxGetApp().obj_list()->update_info_items(object_id);
+    }
     m_layer_height_profile.clear();
     m_layers_texture.valid = false;
     canvas.post_event(SimpleEvent(EVT_GLCANVAS_SCHEDULE_BACKGROUND_PROCESS));
-    wxGetApp().obj_list()->update_info_items(last_object_id);
 }
 
 void GLCanvas3D::LayersEditing::adaptive_layer_height_profile(GLCanvas3D & canvas, float quality_factor)
 {
     this->update_slicing_parameters();
-    m_layer_height_profile = layer_height_profile_adaptive(*m_slicing_parameters, *m_model_object, quality_factor);
-    const_cast<ModelObject*>(m_model_object)->layer_height_profile.set(m_layer_height_profile);
-    m_layers_texture.valid = false;
-    canvas.post_event(SimpleEvent(EVT_GLCANVAS_SCHEDULE_BACKGROUND_PROCESS));
-    wxGetApp().obj_list()->update_info_items(last_object_id);
+    const std::vector<int> object_ids = this->edited_object_ids();
+    std::vector<std::vector<double>> profiles;
+    for (int object_id : object_ids) {
+        const ModelObject& model_object = *m_model->objects[object_id];
+        profiles.emplace_back(layer_height_profile_adaptive(this->slicing_parameters_of(model_object), model_object, quality_factor));
+    }
+    if (profiles.size() > 1 && !m_each_separately) {
+        // One profile for all: the finest layer height any of the objects asks for at each Z.
+        const std::vector<double> merged = layer_height_profile_merge_finest(profiles);
+        for (size_t i = 0; i < object_ids.size(); ++i)
+            profiles[i] = layer_height_profile_fit_to_height(merged, m_model->objects[object_ids[i]]->max_z());
+    }
+    this->set_profiles(canvas, object_ids, profiles);
 }
 
 void GLCanvas3D::LayersEditing::smooth_layer_height_profile(GLCanvas3D & canvas, const HeightProfileSmoothingParams & smoothing_params)
 {
     this->update_slicing_parameters();
-    m_layer_height_profile = smooth_height_profile(m_layer_height_profile, *m_slicing_parameters, smoothing_params);
-    const_cast<ModelObject*>(m_model_object)->layer_height_profile.set(m_layer_height_profile);
-    m_layers_texture.valid = false;
-    canvas.post_event(SimpleEvent(EVT_GLCANVAS_SCHEDULE_BACKGROUND_PROCESS));
-    wxGetApp().obj_list()->update_info_items(last_object_id);
+    const std::vector<int> object_ids = this->edited_object_ids();
+    // The object shown is the tallest one, so its profile covers the others when they share one.
+    std::vector<std::vector<double>> profiles{ smooth_height_profile(m_layer_height_profile, *m_slicing_parameters, smoothing_params) };
+    for (size_t i = 1; i < object_ids.size(); ++i) {
+        const ModelObject& model_object = *m_model->objects[object_ids[i]];
+        if (m_each_separately) {
+            const SlicingParameters slicing_parameters = this->slicing_parameters_of(model_object);
+            std::vector<double>     profile;
+            PrintObject::update_layer_height_profile(model_object, slicing_parameters, profile);
+            profiles.emplace_back(smooth_height_profile(profile, slicing_parameters, smoothing_params));
+        } else
+            profiles.emplace_back(layer_height_profile_fit_to_height(profiles.front(), model_object.max_z()));
+    }
+    this->set_profiles(canvas, object_ids, profiles);
 }
 
 void GLCanvas3D::LayersEditing::generate_layer_height_texture()
@@ -817,6 +871,14 @@ void GLCanvas3D::LayersEditing::accept_changes(GLCanvas3D & canvas)
     if (last_object_id >= 0) {
         wxGetApp().plater()->take_snapshot("Variable layer height - Manual edit");
         const_cast<ModelObject*>(m_model_object)->layer_height_profile.set(m_layer_height_profile);
+        if (!m_each_separately)
+            // The other selected objects share the profile that was just edited.
+            for (int object_id : this->edited_object_ids())
+                if (object_id != last_object_id) {
+                    ModelObject& model_object = *m_model->objects[object_id];
+                    model_object.layer_height_profile.set(layer_height_profile_fit_to_height(m_layer_height_profile, model_object.max_z()));
+                    wxGetApp().obj_list()->update_info_items(object_id);
+                }
         canvas.post_event(SimpleEvent(EVT_GLCANVAS_SCHEDULE_BACKGROUND_PROCESS));
         wxGetApp().obj_list()->update_info_items(last_object_id);
     }
@@ -1932,6 +1994,20 @@ void GLCanvas3D::smooth_layer_height_profile(const HeightProfileSmoothingParams&
     m_layers_editing.smooth_layer_height_profile(*this, smoothing_params);
     m_layers_editing.state = LayersEditing::Completed;
     m_dirty = true;
+}
+
+std::vector<int> GLCanvas3D::get_layers_editing_object_idxs() const
+{
+    std::vector<int> object_idxs;
+    if (m_model == nullptr)
+        return object_idxs;
+    for (const auto& [object_idx, instance_idxs] : m_selection.get_content())
+        if (object_idx >= 0 && object_idx < int(m_model->objects.size()) && m_model->objects[object_idx]->max_z() > SINKING_Z_THRESHOLD)
+            object_idxs.emplace_back(object_idx);
+    std::stable_sort(object_idxs.begin(), object_idxs.end(), [this](int lhs, int rhs) {
+        return m_model->objects[lhs]->max_z() > m_model->objects[rhs]->max_z();
+    });
+    return object_idxs;
 }
 
 void GLCanvas3D::enable_layers_editing(bool enable)
@@ -4366,7 +4442,9 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
 #endif /* SLIC3R_DEBUG_MOUSE_EVENTS */
     }
     const int selected_object_idx      = m_selection.get_object_idx();
-    const int layer_editing_object_idx = is_layers_editing_enabled() ? selected_object_idx : -1;
+    // Orca: with several objects selected, the tool shows the tallest one.
+    const int layer_editing_object_idx = is_layers_editing_enabled() ?
+        (selected_object_idx != -1 ? selected_object_idx : m_layers_editing.last_object_id) : -1;
     const bool mouse_in_layer_editing  = layer_editing_object_idx != -1 && m_layers_editing.bar_rect_contains(*this, pos(0), pos(1));
 
     if (!mouse_in_layer_editing && m_main_toolbar.on_mouse(evt, *this)) {
@@ -8746,9 +8824,14 @@ void GLCanvas3D::_render_objects(GLVolumeCollection::ERenderType type, bool with
 
     m_camera_clipping_plane = _get_volumes_clipping_plane();
 
-    if (m_picking_enabled)
-        // Update the layer editing selection to the first object selected, update the current object maximum Z.
-        m_layers_editing.select_object(*m_model, this->is_layers_editing_enabled() ? m_selection.get_object_idx() : -1);
+    if (m_picking_enabled) {
+        // Update the layer editing selection to the tallest object selected, update the current object maximum Z.
+        std::vector<int> object_idxs = this->is_layers_editing_enabled() ? this->get_layers_editing_object_idxs() : std::vector<int>();
+        m_layers_editing.select_object(*m_model, object_idxs.empty() ? -1 : object_idxs.front());
+        if (!object_idxs.empty())
+            object_idxs.erase(object_idxs.begin());
+        m_layers_editing.set_other_objects(std::move(object_idxs));
+    }
 
     if (const BuildVolume &build_volume = m_bed.build_volume(); build_volume.valid()) {
         switch (build_volume.type()) {

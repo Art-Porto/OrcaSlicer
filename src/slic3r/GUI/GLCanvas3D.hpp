@@ -260,6 +260,11 @@ class GLCanvas3D
         const DynamicPrintConfig* m_config{ nullptr };
         // ModelObject for the currently selected object (Model::objects[last_object_id]).
         const ModelObject* m_model_object{ nullptr };
+        // Orca: the other selected objects, edited along with the one shown. Indices into m_model->objects.
+        const Model*                m_model{ nullptr };
+        std::vector<int>            m_other_object_ids;
+        // Orca: whether several selected objects each get a profile of their own, or share one.
+        bool                        m_each_separately{ false };
         // Maximum z of the currently selected object (Model::objects[last_object_id]).
         float                       m_object_max_z{ 0.0f };
         // Owned by LayersEditing.
@@ -315,6 +320,7 @@ class GLCanvas3D
 
         void set_config(const DynamicPrintConfig* config);
         void select_object(const Model& model, int object_id);
+        void set_other_objects(std::vector<int> object_ids) { m_other_object_ids = std::move(object_ids); }
 
         bool is_allowed() const;
 
@@ -346,6 +352,10 @@ class GLCanvas3D
         void render_active_object_annotations(const GLCanvas3D& canvas);
         void render_profile(const GLCanvas3D& canvas);
         void update_slicing_parameters();
+        // Orca: the object shown, followed by the other selected ones.
+        std::vector<int> edited_object_ids() const;
+        SlicingParameters slicing_parameters_of(const ModelObject& model_object) const;
+        void set_profiles(GLCanvas3D& canvas, const std::vector<int>& object_ids, const std::vector<std::vector<double>>& profiles);
 
         static float thickness_bar_width(const GLCanvas3D& canvas);
     };
@@ -981,6 +991,8 @@ public:
 
     bool is_layers_editing_enabled() const { return m_layers_editing.is_enabled(); }
     bool is_layers_editing_allowed() const { return m_layers_editing.is_allowed(); }
+    // Orca: the selected objects the variable layer height tool edits, tallest first. The tallest is the one it shows.
+    std::vector<int> get_layers_editing_object_idxs() const;
 
     void reset_layer_height_profile();
     void adaptive_layer_height_profile(float quality_factor);
