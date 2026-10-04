@@ -438,8 +438,6 @@ void GLCanvas3D::LayersEditing::render_variable_layer_height_dialog(GLCanvas3D& 
         imgui.text(_L("Each object separately"));
         if (m_bar_object_ids.size() > 1)
             imgui.text(_L("Point at a bar to edit its object."));
-        if (m_each_separately && m_other_object_ids.size() + 1 > MAX_BARS)
-            imgui.text(_L("Only the three tallest objects have a bar."));
     }
 
     ImGui::Separator();
@@ -518,7 +516,9 @@ int GLCanvas3D::LayersEditing::bar_at(const GLCanvas3D& canvas, float x, float y
     const int   bars     = std::max(1, int(canvas.m_layers_editing.m_bar_object_ids.size()));
     if (x < w - float(bars) * bar_w || x > w || y < 0.0f || y > h)
         return -1;
-    return std::min(bars - 1, int((w - x) / bar_w));
+    const int bar = std::min(bars - 1, int((w - x) / bar_w));
+    // Above a lower bar the scene shows through, and the mouse belongs to it.
+    return y < h * (1.0f - canvas.m_layers_editing.bar_fraction(size_t(bar))) ? -1 : bar;
 }
 
 size_t GLCanvas3D::LayersEditing::active_bar() const
@@ -533,19 +533,36 @@ Rect GLCanvas3D::LayersEditing::get_bar_rect_screen(const GLCanvas3D& canvas)
     const Size& cnv_size = canvas.get_canvas_size();
     float w = (float)cnv_size.get_width();
     float h = (float)cnv_size.get_height();
-    const float bar_w  = thickness_bar_width(canvas);
-    const float right  = w - float(canvas.m_layers_editing.active_bar()) * bar_w;
+    const float  bar_w  = thickness_bar_width(canvas);
+    const size_t active = canvas.m_layers_editing.active_bar();
+    const float  right  = w - float(active) * bar_w;
 
-    return { right - bar_w, 0.0f, right, h };
+    return { right - bar_w, h * (1.0f - canvas.m_layers_editing.bar_fraction(active)), right, h };
 }
 
-int GLCanvas3D::LayersEditing::choose_shown_object(const GLCanvas3D& canvas, const std::vector<int>& object_ids)
+int GLCanvas3D::LayersEditing::choose_shown_object(const GLCanvas3D& canvas, const Model& model, const std::vector<int>& object_ids)
 {
+    // Objects past MAX_BARS still get Adaptive, Smooth and Reset, but have no bar to show or paint.
+    const bool bars_notice = m_each_separately && object_ids.size() > MAX_BARS;
+    if (bars_notice != m_bars_notice_shown) {
+        m_bars_notice_shown = bars_notice;
+        const std::string notice_text = _u8L("Variable layer height: only the three tallest selected objects have a bar. The others still take Adaptive, Smooth and Reset.");
+        NotificationManager& notification_manager = *wxGetApp().plater()->get_notification_manager();
+        if (bars_notice)
+            notification_manager.push_plater_warning_notification(notice_text);
+        else
+            notification_manager.close_plater_warning_notification(notice_text);
+    }
+
     m_bar_object_ids.clear();
+    m_bar_fractions.clear();
     if (object_ids.empty())
         return -1;
 
     m_bar_object_ids.assign(object_ids.begin(), object_ids.begin() + (m_each_separately ? std::min(object_ids.size(), MAX_BARS) : 1));
+    const double tallest = model.objects[m_bar_object_ids.front()]->max_z();
+    for (int object_id : m_bar_object_ids)
+        m_bar_fractions.emplace_back(tallest > 0. ? float(std::min(1., model.objects[object_id]->max_z() / tallest)) : 1.0f);
     int shown = std::find(m_bar_object_ids.begin(), m_bar_object_ids.end(), last_object_id) != m_bar_object_ids.end() ?
         last_object_id : m_bar_object_ids.front();
     // A profile being painted stays with its object, wherever the mouse wanders.
@@ -638,7 +655,7 @@ void GLCanvas3D::LayersEditing::render_active_object_annotations(const GLCanvas3
         // vertices
         const float l = 1.0f - 2.0f * float(bar + 1) * bar_w * cnv_inv_width;
         const float r = 1.0f - 2.0f * float(bar) * bar_w * cnv_inv_width;
-        const float t = 1.0f;
+        const float t = -1.0f + 2.0f * this->bar_fraction(bar);
         const float b = -1.0f;
         init_data.add_vertex(Vec3f(l, b, 0.0f), Vec3f::UnitZ(), Vec2f(0.0f, 0.0f));
         init_data.add_vertex(Vec3f(r, b, 0.0f), Vec3f::UnitZ(), Vec2f(1.0f, 0.0f));
@@ -704,14 +721,16 @@ void GLCanvas3D::LayersEditing::render_profile(const GLCanvas3D& canvas)
     for (size_t bar = 0; bar < bars; ++bar) {
         const ObjectTexture*       other   = bar == active ? nullptr : &this->other_object_texture(m_bar_object_ids[bar]);
         const std::vector<double>& profile = other == nullptr ? m_layer_height_profile : other->profile;
-        const float                scale_y = cnv_height / (other == nullptr ? m_object_max_z : float(other->max_z));
+        const float                scale_y = cnv_height * this->bar_fraction(bar) / (other == nullptr ? m_object_max_z : float(other->max_z));
         const float                left    = cnv_width - float(bar + 1) * bar_w;
+        const float                top     = -1.0f + 2.0f * this->bar_fraction(bar);
 
         const float axis_x = to_ndc_x(left + float(m_slicing_parameters->layer_height) * scale_x);
-        add_line(Vec2f(axis_x, -1.0f), Vec2f(axis_x, 1.0f));
-        if (bar > 0) {
-            const float edge_x = to_ndc_x(left + bar_w);
-            add_line(Vec2f(edge_x, -1.0f), Vec2f(edge_x, 1.0f));
+        add_line(Vec2f(axis_x, -1.0f), Vec2f(axis_x, top));
+        if (bars > 1) {
+            // The outline of the bar: its left edge and its top. The next bar to the right is at least as tall.
+            add_line(Vec2f(to_ndc_x(left), -1.0f), Vec2f(to_ndc_x(left), top));
+            add_line(Vec2f(to_ndc_x(left), top), Vec2f(to_ndc_x(left + bar_w), top));
         }
         if (bars == 1)
             for (int object_id : m_other_object_ids)
@@ -747,11 +766,13 @@ void GLCanvas3D::LayersEditing::render_profile(const GLCanvas3D& canvas)
         // Kept a pixel inside the bar, so the frame is not drawn over by the edge between bars.
         const float l = to_ndc_x(cnv_width - float(active + 1) * bar_w + 1.0f);
         const float r = to_ndc_x(cnv_width - float(active) * bar_w - 1.0f);
+        const float t = to_ndc_y(cnv_height * this->bar_fraction(active) - 1.0f);
         frame_data.add_vertex(Vec2f(l, -1.0f));
-        frame_data.add_vertex(Vec2f(l, 1.0f));
+        frame_data.add_vertex(Vec2f(l, t));
+        frame_data.add_vertex(Vec2f(r, t));
         frame_data.add_vertex(Vec2f(r, -1.0f));
-        frame_data.add_vertex(Vec2f(r, 1.0f));
         frame_data.add_line(0, 1);
+        frame_data.add_line(1, 2);
         frame_data.add_line(2, 3);
         frame.init_from(std::move(frame_data));
     }
@@ -8964,7 +8985,7 @@ void GLCanvas3D::_render_objects(GLVolumeCollection::ERenderType type, bool with
     if (m_picking_enabled) {
         // Update the layer editing selection to the tallest object selected, update the current object maximum Z.
         std::vector<int> object_idxs = this->is_layers_editing_enabled() ? this->get_layers_editing_object_idxs() : std::vector<int>();
-        const int        shown       = m_layers_editing.choose_shown_object(*this, object_idxs);
+        const int        shown       = m_layers_editing.choose_shown_object(*this, *m_model, object_idxs);
         m_layers_editing.select_object(*m_model, shown);
         object_idxs.erase(std::remove(object_idxs.begin(), object_idxs.end(), shown), object_idxs.end());
         m_layers_editing.set_other_objects(std::move(object_idxs));
