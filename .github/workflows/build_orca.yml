@@ -469,6 +469,22 @@ jobs:
           .\build_win.bat -s --tests -i --arch ${{ inputs.arch }} --build-dir $env:BUILD_DIR --deps-dir $deps @flags
         shell: pwsh
 
+      # Test only: names the function at a crash address reported for the previous build of this
+      # branch, using the PDB that sits next to the freshly linked DLL.
+      - name: Symbolize crash address (test)
+        if: runner.os == 'Windows' && github.ref_name == 'vlh-prime-tower-wintest'
+        shell: pwsh
+        run: |
+          $sym = Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -Recurse -Filter llvm-symbolizer.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          $dlls = Get-ChildItem "${{ github.workspace }}" -Recurse -Filter OrcaSlicer.dll -ErrorAction SilentlyContinue
+          $dlls | ForEach-Object { Write-Host $_.FullName $_.Length (Get-FileHash $_.FullName -Algorithm SHA256).Hash }
+          $dll = $dlls | Where-Object { Test-Path ($_.FullName -replace '\.dll$', '.pdb') } | Select-Object -First 1
+          if (-not $dll) { $dll = $dlls | Select-Object -First 1 }
+          Write-Host "symbolizer: $($sym.FullName)"
+          Write-Host "dll: $($dll.FullName)"
+          & $sym.FullName "--obj=$($dll.FullName)" --relative-address --inlines --demangle 0x9e177f 0x9e1770 0x9e1700
+          exit 0
+
       - name: Build system preset cache (Windows)
         if: runner.os == 'Windows'
         shell: cmd
