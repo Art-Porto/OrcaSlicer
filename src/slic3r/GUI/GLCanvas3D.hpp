@@ -358,6 +358,8 @@ class GLCanvas3D
         static bool bar_rect_contains(const GLCanvas3D& canvas, float x, float y);
         static Rect get_bar_rect_screen(const GLCanvas3D& canvas);
         static float get_overlay_window_width() { return LayersEditing::s_overlay_window_width; }
+        // Orca: the width taken by the bars beyond the first one, which notifications have to clear too.
+        float extra_bars_width() const { return m_enabled && m_bar_object_ids.size() > 1 ? float(m_bar_object_ids.size() - 1) * THICKNESS_BAR_WIDTH : 0.0f; }
 
         float object_max_z() const { return m_object_max_z; }
 
@@ -373,7 +375,7 @@ class GLCanvas3D
         float bar_fraction(size_t bar) const { return bar < m_bar_fractions.size() ? m_bar_fractions[bar] : 1.0f; }
         // Index of the bar under the given point, or -1.
         static int bar_at(const GLCanvas3D& canvas, float x, float y);
-        void render_object_volumes(const GLVolumeCollection& volumes, GLShaderProgram& shader, int object_id, const LayersTexture& texture, double object_max_z);
+        void render_object_volumes(const GLVolumeCollection& volumes, GLShaderProgram& shader, int object_id, const LayersTexture& texture, double object_max_z, float z_cursor);
         void render_active_object_annotations(const GLCanvas3D& canvas);
         void render_profile(const GLCanvas3D& canvas);
         void update_slicing_parameters();
@@ -1566,7 +1568,7 @@ private:
     bool _deactivate_layersediting_menu();
 
     // BBS FIXME
-    float get_overlay_window_width() { return 0; /*LayersEditing::get_overlay_window_width();*/ }
+    float get_overlay_window_width() { return m_layers_editing.extra_bars_width(); /*LayersEditing::get_overlay_window_width();*/ }
 };
 
 const ModelVolume *get_model_volume(const GLVolume &v, const Model &model);

@@ -826,8 +826,10 @@ void GLCanvas3D::LayersEditing::render_volumes(const GLCanvas3D& canvas, const G
 
     // Uniforms were resolved, go ahead using the layer editing shader.
     shader->set_uniform("z_texture_row_to_normalized", 1.0f / float(m_layers_texture.height));
-    shader->set_uniform("z_cursor", float(m_object_max_z) * float(this->get_cursor_z_relative(canvas)));
     shader->set_uniform("z_cursor_band_width", float(this->band_width));
+    // The band at the height under the mouse goes on the objects the edit will change: all of them
+    // while they share a profile, or the object shown alone when each has its own.
+    const float z_cursor = float(m_object_max_z) * float(this->get_cursor_z_relative(canvas));
     shader->set_uniform("projection_matrix", wxGetApp().plater()->get_camera().get_projection_matrix());
 
     // Orca: the other selected objects, each with its own layer heights. The object shown goes last:
@@ -835,16 +837,17 @@ void GLCanvas3D::LayersEditing::render_volumes(const GLCanvas3D& canvas, const G
     for (int object_id : this->edited_object_ids())
         if (object_id != this->last_object_id) {
             const ObjectTexture& other = this->other_object_texture(object_id);
-            this->render_object_volumes(volumes, *shader, object_id, other.texture, other.max_z);
+            this->render_object_volumes(volumes, *shader, object_id, other.texture, other.max_z, m_each_separately ? -1000.0f * float(other.max_z) : z_cursor);
         }
-    this->render_object_volumes(volumes, *shader, this->last_object_id, m_layers_texture, m_object_max_z);
+    this->render_object_volumes(volumes, *shader, this->last_object_id, m_layers_texture, m_object_max_z, z_cursor);
     // Revert back to the previous shader.
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void GLCanvas3D::LayersEditing::render_object_volumes(const GLVolumeCollection& volumes, GLShaderProgram& shader, int object_id, const LayersTexture& texture, double object_max_z)
+void GLCanvas3D::LayersEditing::render_object_volumes(const GLVolumeCollection& volumes, GLShaderProgram& shader, int object_id, const LayersTexture& texture, double object_max_z, float z_cursor)
 {
     shader.set_uniform("z_to_texture_row", float(texture.cells - 1) / (float(texture.width) * float(object_max_z)));
+    shader.set_uniform("z_cursor", z_cursor);
     this->load_texture(texture);
 
     const Transform3d& view_matrix = wxGetApp().plater()->get_camera().get_view_matrix();
