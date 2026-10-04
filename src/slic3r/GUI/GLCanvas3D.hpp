@@ -311,6 +311,11 @@ class GLCanvas3D
         // the tallest ones, up to MAX_BARS. The object shown (last_object_id) is one of them.
         static constexpr size_t MAX_BARS = 3;
         std::vector<int> m_bar_object_ids;
+        // Height of each bar as a fraction of the canvas height: the bars share one scale, set by the
+        // tallest object, so a lower object has a lower bar.
+        std::vector<float> m_bar_fractions;
+        // Whether the notice that some selected objects have no bar is up.
+        bool m_bars_notice_shown{ false };
 
     public:
         EState state{ Unknown };
@@ -330,7 +335,7 @@ class GLCanvas3D
         void set_other_objects(std::vector<int> object_ids) { m_other_object_ids = std::move(object_ids); }
         // Orca: lays out the bars for the selected objects (tallest first) and returns the object to
         // show and edit: the one whose bar the mouse is on, or else the one shown so far.
-        int choose_shown_object(const GLCanvas3D& canvas, const std::vector<int>& object_ids);
+        int choose_shown_object(const GLCanvas3D& canvas, const Model& model, const std::vector<int>& object_ids);
         // Orca: whether the tool paints this object with its layer heights.
         bool is_edited_object(int object_id) const;
 
@@ -365,6 +370,7 @@ class GLCanvas3D
         void load_texture(const LayersTexture& texture);
         // Index into m_bar_object_ids of the bar of the object shown.
         size_t active_bar() const;
+        float bar_fraction(size_t bar) const { return bar < m_bar_fractions.size() ? m_bar_fractions[bar] : 1.0f; }
         // Index of the bar under the given point, or -1.
         static int bar_at(const GLCanvas3D& canvas, float x, float y);
         void render_object_volumes(const GLVolumeCollection& volumes, GLShaderProgram& shader, int object_id, const LayersTexture& texture, double object_max_z);
