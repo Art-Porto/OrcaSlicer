@@ -3939,12 +3939,13 @@ bool GLCanvas3D::handle_shortcut(const KeyChord& chord)
     };
 
     switch (shortcut) {
+    // Orca: the variable layer height tool works on several objects, so selecting all stays available in it.
     case Shortcut::SelectAll:
-        if (!painting && !m_layers_editing.is_enabled())
+        if (!painting)
             post_event(SimpleEvent(EVT_GLCANVAS_SELECT_CURR_PLATE_ALL));
         break;
     case Shortcut::SelectAllPlates:
-        if (!painting && !m_layers_editing.is_enabled())
+        if (!painting)
             post_event(SimpleEvent(EVT_GLCANVAS_SELECT_ALL));
         break;
     case Shortcut::Copy:  if (!painting) post_event(SimpleEvent(EVT_GLTOOLBAR_COPY)); break;
