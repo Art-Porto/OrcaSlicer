@@ -843,39 +843,60 @@ std::vector<coordf_t> layer_height_profile_fit_to_height(
 std::vector<coordf_t> layer_height_profile_merge_finest(
     const std::vector<std::vector<coordf_t>> &layer_height_profiles)
 {
-    std::vector<coordf_t> zs;
+    assert(! layer_height_profiles.empty());
+    const std::vector<coordf_t> *tallest = &layer_height_profiles.front();
     for (const std::vector<coordf_t> &profile : layer_height_profiles) {
         assert(profile.size() >= 4);
         assert(profile.size() % 2 == 0);
-        for (size_t i = 0; i < profile.size(); i += 2)
-            zs.push_back(profile[i]);
+        if (profile[profile.size() - 2] > (*tallest)[tallest->size() - 2])
+            tallest = &profile;
     }
-    std::sort(zs.begin(), zs.end());
+    const coordf_t top = (*tallest)[tallest->size() - 2];
 
     // Index of the entry each profile was last read at. The Zs only grow, so it never moves back.
-    std::vector<size_t>   cursors(layer_height_profiles.size(), 0);
-    std::vector<coordf_t> out;
-    out.reserve(zs.size() * 2);
-    for (const coordf_t z : zs) {
-        if (! out.empty() && z - out[out.size() - 2] < EPSILON)
-            continue;
+    std::vector<size_t> cursors(layer_height_profiles.size(), 0);
+    // The finest layer height asked for at z. Above its own top an object asks for nothing, but its
+    // last layer height is eased back up at the rate the adaptive profile allows from one layer to
+    // the next, rather than released at once: a jump there is a seam on the taller objects.
+    const auto finest_at = [&layer_height_profiles, &cursors](coordf_t z) {
         coordf_t height = std::numeric_limits<coordf_t>::max();
         for (size_t idx_profile = 0; idx_profile < layer_height_profiles.size(); ++idx_profile) {
-            const std::vector<coordf_t> &profile = layer_height_profiles[idx_profile];
-            if (z > profile[profile.size() - 2] + EPSILON)
-                // Above the top of this object.
+            const std::vector<coordf_t> &profile     = layer_height_profiles[idx_profile];
+            const size_t                 end         = profile.size() - 2;
+            const coordf_t               profile_top = profile[end];
+            if (z > profile_top + EPSILON) {
+                const coordf_t last = profile[end - 1];
+                height = std::min(height, std::sqrt(last * last + 2. * LAYER_HEIGHT_CHANGE_STEP * (z - profile_top)));
                 continue;
-            const size_t end = profile.size() - 2;
-            size_t      &i   = cursors[idx_profile];
+            }
+            size_t &i = cursors[idx_profile];
             while (i + 2 < end && profile[i + 2] <= z)
                 i += 2;
             height = std::min(height, i + 2 < end ?
                 lerp(profile[i + 1], profile[i + 3], (z - profile[i]) / (profile[i + 2] - profile[i])) :
                 profile[i + 1]);
         }
-        out.push_back(z);
-        out.push_back(height);
+        return height;
+    };
+
+    // One entry per layer, as layer_height_profile_adaptive() lays its profile out, which is the
+    // spacing smooth_height_profile() counts on. A fixed first layer keeps its own two entries.
+    std::vector<coordf_t> out{ 0., (*tallest)[1] };
+    coordf_t print_z = (*tallest)[1];
+    if (std::abs((*tallest)[2] - print_z) < EPSILON && std::abs((*tallest)[3] - print_z) < EPSILON) {
+        out.push_back(print_z);
+        out.push_back(print_z);
     }
+    while (print_z + EPSILON < top) {
+        const coordf_t height = finest_at(print_z);
+        if (height < EPSILON)
+            break;
+        out.push_back(print_z);
+        out.push_back(height);
+        print_z += height;
+    }
+    out.push_back(top);
+    out.push_back(out[out.size() - 2]);
     return out;
 }
 
