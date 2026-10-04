@@ -116,13 +116,28 @@ static void grow_compacted_wipe_tower(arrangement::ArrangePolygon& ap, double ob
         ap.poly.contour = grown.front();
 }
 
-arrangement::ArrangePolygon get_wipetower_arrange_poly(WipeTower* tower)
+arrangement::ArrangePolygon get_wipetower_arrange_poly(WipeTower* tower, double object_gap = 0.)
 {
     ArrangePolygon ap = tower->get_arrange_polygon();
     ap.bed_idx = 0;
     ap.setter = NULL; // do not move wipe tower
-    grow_compacted_wipe_tower(ap);
+    grow_compacted_wipe_tower(ap, object_gap);
     return ap;
+}
+
+// Orca: the gap in mm the arranger leaves around each of the objects it is about to place, as
+// update_selected_items_inflation() works it out: the spacing asked for, or else the room kept for
+// brims and tree supports.
+static double arranged_object_gap(const arrangement::ArrangeParams& params, const ArrangePolygons& selected)
+{
+    if (params.min_obj_distance != 0)
+        return unscale<double>(params.min_obj_distance) / 2.;
+    if (selected.empty())
+        return 0.;
+    const bool tree_support = std::any_of(selected.begin(), selected.end(), [](const ArrangePolygon& ap) { return ap.has_tree_support; });
+    const auto by_brim      = [](const ArrangePolygon& lhs, const ArrangePolygon& rhs) { return lhs.brim_width < rhs.brim_width; };
+    return tree_support ? std::max_element(selected.begin(), selected.end(), by_brim)->brim_width / 2. :
+                          std::min_element(selected.begin(), selected.end(), by_brim)->brim_width;
 }
 
 void ArrangeJob::clear_input()
@@ -372,17 +387,7 @@ void ArrangeJob::prepare_wipe_tower()
     BOOST_LOG_TRIVIAL(info) << "arrange: need_wipe_tower=" << need_wipe_tower;
 
 
-    // Orca: the gap the arranger leaves around each selected object, as update_selected_items_inflation()
-    // works it out: the spacing asked for, or else the room kept for brims and tree supports.
-    double object_gap = 0.;
-    if (params.min_obj_distance != 0)
-        object_gap = unscale<double>(params.min_obj_distance) / 2.;
-    else if (!m_selected.empty()) {
-        const bool tree_support = std::any_of(m_selected.begin(), m_selected.end(), [](const ArrangePolygon& ap) { return ap.has_tree_support; });
-        const auto by_brim      = [](const ArrangePolygon& lhs, const ArrangePolygon& rhs) { return lhs.brim_width < rhs.brim_width; };
-        object_gap = tree_support ? std::max_element(m_selected.begin(), m_selected.end(), by_brim)->brim_width / 2. :
-                                    std::min_element(m_selected.begin(), m_selected.end(), by_brim)->brim_width;
-    }
+    const double object_gap = arranged_object_gap(params, m_selected);
 
     ArrangePolygon    wipe_tower_ap;
     wipe_tower_ap.name = "WipeTower";
@@ -405,9 +410,7 @@ void ArrangeJob::prepare_wipe_tower()
             continue;
         if (auto wti = get_wipe_tower(*m_plater, bedid)) {
             // wipe tower is already there
-            wipe_tower_ap = wti.get_arrange_polygon();
-            wipe_tower_ap.setter = NULL; // do not move wipe tower
-            grow_compacted_wipe_tower(wipe_tower_ap, object_gap);
+            wipe_tower_ap = get_wipetower_arrange_poly(&wti, object_gap);
             wipe_tower_ap.bed_idx = bedid_unlocked;
             m_unselected.emplace_back(wipe_tower_ap);
         }
@@ -482,7 +485,7 @@ void ArrangeJob::prepare_partplate() {
 
     // BBS
     if (auto wti = get_wipe_tower(*m_plater, current_plate_index)) {
-        ArrangePolygon&& ap = get_wipetower_arrange_poly(&wti);
+        ArrangePolygon&& ap = get_wipetower_arrange_poly(&wti, arranged_object_gap(params, m_selected));
         m_unselected.emplace_back(std::move(ap));
     }
 
