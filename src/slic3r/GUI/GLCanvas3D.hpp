@@ -301,9 +301,16 @@ class GLCanvas3D
         {
             LayersTexture       texture;
             std::vector<double> model_profile;
+            // The profile the object is sliced with, which is model_profile or the default one.
+            std::vector<double> profile;
             double              max_z{ 0. };
         };
         std::map<int, ObjectTexture> m_other_textures;
+        // Orca: the objects that have a bar of their own, the rightmost bar first. With one profile
+        // shared between the selected objects that is the tallest object alone; with a profile each,
+        // the tallest ones, up to MAX_BARS. The object shown (last_object_id) is one of them.
+        static constexpr size_t MAX_BARS = 3;
+        std::vector<int> m_bar_object_ids;
 
     public:
         EState state{ Unknown };
@@ -312,15 +319,6 @@ class GLCanvas3D
         int last_object_id{ -1 };
         float last_z{ 0.0f };
         LayerHeightEditActionType last_action{ LAYER_HEIGHT_EDIT_ACTION_INCREASE };
-        struct Profile
-        {
-            GLModel baseline;
-            GLModel profile;
-            GLModel background;
-            float old_canvas_width{ 0.0f };
-            std::vector<double> old_layer_height_profile;
-        };
-        Profile m_profile;
 
         LayersEditing() = default;
         ~LayersEditing();
@@ -330,6 +328,9 @@ class GLCanvas3D
         void set_config(const DynamicPrintConfig* config);
         void select_object(const Model& model, int object_id);
         void set_other_objects(std::vector<int> object_ids) { m_other_object_ids = std::move(object_ids); }
+        // Orca: lays out the bars for the selected objects (tallest first) and returns the object to
+        // show and edit: the one whose bar the mouse is on, or else the one shown so far.
+        int choose_shown_object(const GLCanvas3D& canvas, const std::vector<int>& object_ids);
         // Orca: whether the tool paints this object with its layer heights.
         bool is_edited_object(int object_id) const;
 
@@ -361,6 +362,11 @@ class GLCanvas3D
         bool is_initialized() const;
         void generate_layer_height_texture();
         const ObjectTexture& other_object_texture(int object_id);
+        void load_texture(const LayersTexture& texture);
+        // Index into m_bar_object_ids of the bar of the object shown.
+        size_t active_bar() const;
+        // Index of the bar under the given point, or -1.
+        static int bar_at(const GLCanvas3D& canvas, float x, float y);
         void render_object_volumes(const GLVolumeCollection& volumes, GLShaderProgram& shader, int object_id, const LayersTexture& texture, double object_max_z);
         void render_active_object_annotations(const GLCanvas3D& canvas);
         void render_profile(const GLCanvas3D& canvas);
