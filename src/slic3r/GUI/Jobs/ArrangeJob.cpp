@@ -96,7 +96,9 @@ static WipeTower get_wipe_tower(const Plater &plater, int plate_idx)
 // Orca: a prime tower compacted by "No sparse layers" stays low, so the toolhead comes down beside it
 // at every tool change. Objects have to keep the toolhead radius from it, as they do from one another
 // when printing by object, so the arranger is given the tower grown by that much.
-static void grow_compacted_wipe_tower(arrangement::ArrangePolygon& ap)
+// object_gap is the distance in mm the arranger keeps around every object anyway, which counts
+// towards that clearance.
+static void grow_compacted_wipe_tower(arrangement::ArrangePolygon& ap, double object_gap = 0.)
 {
     PrintConfig config;
     config.apply(wxGetApp().preset_bundle->full_config(), true);
@@ -109,7 +111,7 @@ static void grow_compacted_wipe_tower(arrangement::ArrangePolygon& ap)
     const CompactedTowerZone zone = compacted_wipe_tower_zone(config, footprint.front());
     if (zone.empty())
         return;
-    const Polygons grown = offset(zone.hull, float(scale_(zone.body_radius)), jtRound, scale_(0.1));
+    const Polygons grown = offset(zone.hull, float(scale_(std::max(0., zone.body_radius - object_gap))), jtRound, scale_(0.1));
     if (!grown.empty())
         ap.poly.contour = grown.front();
 }
@@ -370,6 +372,18 @@ void ArrangeJob::prepare_wipe_tower()
     BOOST_LOG_TRIVIAL(info) << "arrange: need_wipe_tower=" << need_wipe_tower;
 
 
+    // Orca: the gap the arranger leaves around each selected object, as update_selected_items_inflation()
+    // works it out: the spacing asked for, or else the room kept for brims and tree supports.
+    double object_gap = 0.;
+    if (params.min_obj_distance != 0)
+        object_gap = unscale<double>(params.min_obj_distance) / 2.;
+    else if (!m_selected.empty()) {
+        const bool tree_support = std::any_of(m_selected.begin(), m_selected.end(), [](const ArrangePolygon& ap) { return ap.has_tree_support; });
+        const auto by_brim      = [](const ArrangePolygon& lhs, const ArrangePolygon& rhs) { return lhs.brim_width < rhs.brim_width; };
+        object_gap = tree_support ? std::max_element(m_selected.begin(), m_selected.end(), by_brim)->brim_width / 2. :
+                                    std::min_element(m_selected.begin(), m_selected.end(), by_brim)->brim_width;
+    }
+
     ArrangePolygon    wipe_tower_ap;
     wipe_tower_ap.name = "WipeTower";
     wipe_tower_ap.is_virt_object = true;
@@ -391,7 +405,9 @@ void ArrangeJob::prepare_wipe_tower()
             continue;
         if (auto wti = get_wipe_tower(*m_plater, bedid)) {
             // wipe tower is already there
-            wipe_tower_ap = get_wipetower_arrange_poly(&wti);
+            wipe_tower_ap = wti.get_arrange_polygon();
+            wipe_tower_ap.setter = NULL; // do not move wipe tower
+            grow_compacted_wipe_tower(wipe_tower_ap, object_gap);
             wipe_tower_ap.bed_idx = bedid_unlocked;
             m_unselected.emplace_back(wipe_tower_ap);
         }
@@ -402,7 +418,7 @@ void ArrangeJob::prepare_wipe_tower()
                 extruder_ids.insert(plate_extruders.begin(), plate_extruders.end());
             }
             wipe_tower_ap = estimate_wipe_tower_info(bedid, extruder_ids);
-            grow_compacted_wipe_tower(wipe_tower_ap);
+            grow_compacted_wipe_tower(wipe_tower_ap, object_gap);
             wipe_tower_ap.bed_idx = bedid_unlocked;
             m_unselected.emplace_back(wipe_tower_ap);
         }
