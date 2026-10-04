@@ -723,13 +723,14 @@ void GLCanvas3D::LayersEditing::render_volumes(const GLCanvas3D& canvas, const G
     shader->set_uniform("z_cursor_band_width", float(this->band_width));
     shader->set_uniform("projection_matrix", wxGetApp().plater()->get_camera().get_projection_matrix());
 
-    this->render_object_volumes(volumes, *shader, this->last_object_id, m_layers_texture, m_object_max_z);
-    // Orca: the other selected objects, each with its own layer heights.
+    // Orca: the other selected objects, each with its own layer heights. The object shown goes last:
+    // the bar is drawn from whatever texture was loaded last.
     for (int object_id : this->edited_object_ids())
         if (object_id != this->last_object_id) {
             const ObjectTexture& other = this->other_object_texture(object_id);
             this->render_object_volumes(volumes, *shader, object_id, other.texture, other.max_z);
         }
+    this->render_object_volumes(volumes, *shader, this->last_object_id, m_layers_texture, m_object_max_z);
     // Revert back to the previous shader.
     glBindTexture(GL_TEXTURE_2D, 0);
 }
