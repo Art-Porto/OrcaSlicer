@@ -23,6 +23,7 @@
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/GCode/WipeTower.hpp"
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/Slicing.hpp"
 
 #include "test_helpers.hpp"
 #include "libslic3r/PrintBase.hpp"
@@ -241,6 +242,52 @@ TEST_CASE("The tower is sized for the thinnest layer any object on the plate is 
     const float floor_20mm = WipeTower::get_limit_depth_by_height(20.f);
     REQUIRE(floor_20mm < 10.f);
     CHECK_THAT(print.wipe_tower_data(2).depth, Catch::Matchers::WithinAbs(20., 1e-4));
+}
+
+// A 20 mm and a 10 mm tall box sharing one variable layer height profile: 0.2 mm layers up to
+// 5 mm, thinning to 0.1 mm at 10 mm and staying there. `fit` says whether the lower box gets the
+// profile cut to its own height, or the tall box's profile as it is. Each box prints with its own
+// filament, which is what makes the tower real.
+static std::string validate_two_heights_with_variable_layers(bool fit, bool precise_z_height = false)
+{
+    const DynamicPrintConfig config = multifilament_config(2, {
+        { "enable_prime_tower",         "1"         },
+        { "wipe_tower_x",               "50"        }, // inside the 200x200 test bed
+        { "wipe_tower_y",               "50"        }, // (the default y, 220, is not)
+        { "layer_change_gcode",         "G92 E0\n" }, // validate() wants the relative-E reset
+        { "layer_height",               "0.2"       },
+        { "initial_layer_print_height", "0.2"       },
+        { "precise_z_height",           precise_z_height ? "1" : "0" },
+        { "raft_layers",                "0"         } });
+    const std::vector<std::vector<ConfigBase::SetDeserializeItem>> overrides{ { { "extruder", "1" } }, { { "extruder", "2" } } };
+    const std::vector<coordf_t> profile = { 0., 0.2, 5., 0.2, 10., 0.1, 20., 0.1 };
+
+    Print print;
+    Model model;
+    init_print(std::vector<TriangleMesh>{ make_cube(20, 20, 20), make_cube(20, 20, 10) }, print, model, config, &overrides);
+    model.objects[0]->layer_height_profile.set(profile);
+    model.objects[1]->layer_height_profile.set(fit ? layer_height_profile_fit_to_height(profile, 10.) : profile);
+    print.apply(model, config);
+    REQUIRE(print.has_wipe_tower());
+    // Precise Z height would fit the last layers of each box to its own height.
+    REQUIRE(print.precise_z_height_overridden());
+    return print.validate().string;
+}
+
+TEST_CASE("Objects of different heights keep the prime tower when they share a variable layer height profile", "[WipeTower]")
+{
+    CHECK_THAT(validate_two_heights_with_variable_layers(true), !Catch::Matchers::ContainsSubstring("layer height"));
+}
+
+TEST_CASE("Precise Z height is left out when objects of different heights share their layers under the prime tower", "[WipeTower]")
+{
+    CHECK_THAT(validate_two_heights_with_variable_layers(true, true), !Catch::Matchers::ContainsSubstring("layer height"));
+}
+
+TEST_CASE("A variable layer height profile that does not end at the object's top is rejected with the prime tower", "[WipeTower]")
+{
+    // The profile is dropped for the lower box, which is then sliced at a constant 0.2 mm.
+    CHECK_THAT(validate_two_heights_with_variable_layers(false), Catch::Matchers::ContainsSubstring("same variable layer height"));
 }
 
 TEST_CASE("Validation is given the tower's effective width, not the configured one", "[WipeTower]")
