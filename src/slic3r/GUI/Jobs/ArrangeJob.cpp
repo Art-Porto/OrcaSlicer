@@ -394,9 +394,18 @@ void ArrangeJob::prepare_wipe_tower()
 
 
     const double object_gap = arranged_object_gap(params, m_selected);
-    // Orca: a tower already on a plate is gone once the arrange leaves every plate with one filament,
-    // so nothing has to keep away from it then. Objects that are not being arranged may still need it.
-    const bool tower_stays = need_wipe_tower || !m_unselected.empty();
+    // Orca: a tower already on a plate is gone once the arrange has given every plate a single
+    // filament, so nothing has to keep away from it then. It stays for objects that are not being
+    // arranged, and on a plate that changes filament at a layer.
+    const bool towers_leave = !need_wipe_tower && !params.allow_multi_materials_on_same_plate && m_unselected.empty();
+    const auto tower_stays  = [this, towers_leave](int plate_idx) {
+        if (!towers_leave)
+            return true;
+        const auto& custom_gcodes = m_plater->model().plates_custom_gcodes;
+        const auto  it            = custom_gcodes.find(plate_idx);
+        return it != custom_gcodes.end() && std::any_of(it->second.gcodes.begin(), it->second.gcodes.end(),
+            [](const CustomGCode::Item& item) { return item.type == CustomGCode::ToolChange; });
+    };
 
     ArrangePolygon    wipe_tower_ap;
     wipe_tower_ap.name = "WipeTower";
@@ -419,7 +428,7 @@ void ArrangeJob::prepare_wipe_tower()
             continue;
         if (auto wti = get_wipe_tower(*m_plater, bedid)) {
             // wipe tower is already there
-            if (tower_stays) {
+            if (tower_stays(bedid)) {
                 wipe_tower_ap = get_wipetower_arrange_poly(&wti, object_gap, &params.compacted_tower_growth);
                 wipe_tower_ap.bed_idx = bedid_unlocked;
                 m_unselected.emplace_back(wipe_tower_ap);
