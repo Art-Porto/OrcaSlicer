@@ -647,6 +647,7 @@ void GLCanvas3D::LayersEditing::render_active_object_annotations(const GLCanvas3
 
     shader->set_uniform("z_texture_row_to_normalized", 1.0f / (float)m_layers_texture.height);
     shader->set_uniform("z_cursor_band_width", band_width);
+    shader->set_uniform("dimming", 0.0f);
     shader->set_uniform("view_model_matrix", Transform3d::Identity());
     shader->set_uniform("projection_matrix", Transform3d::Identity());
     shader->set_uniform("view_normal_matrix", (Matrix3d)Matrix3d::Identity());
@@ -691,6 +692,25 @@ void GLCanvas3D::LayersEditing::render_active_object_annotations(const GLCanvas3
     glsafe(::glBindTexture(GL_TEXTURE_2D, 0));
 
     shader->stop_using();
+}
+
+// Orca: on a bar shared by several objects, the height at which a lower one ends: a line across the
+// bar, an arrow pointing at it and the name of the object.
+static void render_object_top_mark(const ModelObject& object, float bar_left, float bar_right, float y)
+{
+    ImDrawList*  draw_list = ImGui::GetBackgroundDrawList();
+    const ImU32  color     = ImGui::GetColorU32(ImGuiWrapper::COL_ORCA);
+    const float  arrow     = 0.6f * ImGui::GetFontSize();
+    const float  tip       = bar_left - 2.0f;
+    draw_list->AddLine({ bar_left, y }, { bar_right, y }, color, 2.0f);
+    draw_list->AddTriangleFilled({ tip, y }, { tip - arrow, y - 0.6f * arrow }, { tip - arrow, y + 0.6f * arrow }, color);
+
+    const ImVec2 text_size = ImGui::CalcTextSize(object.name.c_str());
+    const ImVec2 padding   = { 0.4f * ImGui::GetFontSize(), 0.2f * ImGui::GetFontSize() };
+    const ImVec2 text_pos  = { tip - arrow - 2.0f * padding.x - text_size.x, y - 0.5f * text_size.y };
+    draw_list->AddRectFilled({ text_pos.x - padding.x, text_pos.y - padding.y }, { text_pos.x + text_size.x + padding.x, text_pos.y + text_size.y + padding.y },
+        color, padding.y);
+    draw_list->AddText(text_pos, IM_COL32_WHITE, object.name.c_str());
 }
 
 void GLCanvas3D::LayersEditing::render_profile(const GLCanvas3D& canvas)
@@ -751,10 +771,8 @@ void GLCanvas3D::LayersEditing::render_profile(const GLCanvas3D& canvas)
         }
         if (bars == 1)
             for (int object_id : m_other_object_ids)
-                if (object_id >= 0 && object_id < int(m_model->objects.size())) {
-                    const float y = to_ndc_y(float(m_model->objects[object_id]->max_z()) * scale_y);
-                    add_line(Vec2f(to_ndc_x(left), y), Vec2f(1.0f, y));
-                }
+                if (object_id >= 0 && object_id < int(m_model->objects.size()))
+                    render_object_top_mark(*m_model->objects[object_id], left, cnv_width, cnv_height - float(m_model->objects[object_id]->max_z()) * scale_y);
 
         GLModel::Geometry init_data;
         init_data.format = { GLModel::Geometry::EPrimitiveType::LineStrip, GLModel::Geometry::EVertexLayout::P2 };
@@ -851,20 +869,23 @@ void GLCanvas3D::LayersEditing::render_volumes(const GLCanvas3D& canvas, const G
 
     // Orca: the other selected objects, each with its own layer heights. The object shown goes last:
     // the bar is drawn from whatever texture was loaded last.
+    // With a profile each, the objects that are not the one being edited are toned down.
     for (int object_id : this->edited_object_ids())
         if (object_id != this->last_object_id) {
             const ObjectTexture& other = this->other_object_texture(object_id);
-            this->render_object_volumes(volumes, *shader, object_id, other.texture, other.max_z, m_each_separately ? -1000.0f * float(other.max_z) : z_cursor);
+            this->render_object_volumes(volumes, *shader, object_id, other.texture, other.max_z, m_each_separately ? -1000.0f * float(other.max_z) : z_cursor,
+                m_each_separately ? 0.6f : 0.0f);
         }
-    this->render_object_volumes(volumes, *shader, this->last_object_id, m_layers_texture, m_object_max_z, z_cursor);
+    this->render_object_volumes(volumes, *shader, this->last_object_id, m_layers_texture, m_object_max_z, z_cursor, 0.0f);
     // Revert back to the previous shader.
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void GLCanvas3D::LayersEditing::render_object_volumes(const GLVolumeCollection& volumes, GLShaderProgram& shader, int object_id, const LayersTexture& texture, double object_max_z, float z_cursor)
+void GLCanvas3D::LayersEditing::render_object_volumes(const GLVolumeCollection& volumes, GLShaderProgram& shader, int object_id, const LayersTexture& texture, double object_max_z, float z_cursor, float dimming)
 {
     shader.set_uniform("z_to_texture_row", float(texture.cells - 1) / (float(texture.width) * float(object_max_z)));
     shader.set_uniform("z_cursor", z_cursor);
+    shader.set_uniform("dimming", dimming);
     this->load_texture(texture);
 
     const Transform3d& view_matrix = wxGetApp().plater()->get_camera().get_view_matrix();

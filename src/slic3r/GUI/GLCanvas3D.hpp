@@ -381,7 +381,7 @@ class GLCanvas3D
         float bar_fraction(size_t bar) const { return bar < m_bar_fractions.size() ? m_bar_fractions[bar] : 1.0f; }
         // Index of the bar under the given point, or -1.
         static int bar_at(const GLCanvas3D& canvas, float x, float y);
-        void render_object_volumes(const GLVolumeCollection& volumes, GLShaderProgram& shader, int object_id, const LayersTexture& texture, double object_max_z, float z_cursor);
+        void render_object_volumes(const GLVolumeCollection& volumes, GLShaderProgram& shader, int object_id, const LayersTexture& texture, double object_max_z, float z_cursor, float dimming);
         void render_active_object_annotations(const GLCanvas3D& canvas);
         void render_profile(const GLCanvas3D& canvas);
         void update_slicing_parameters();
