@@ -729,25 +729,6 @@ void GLCanvas3D::LayersEditing::render_active_object_annotations(const GLCanvas3
     shader->stop_using();
 }
 
-// Orca: on a bar shared by several objects, the height at which a lower one ends: a line across the
-// bar, an arrow pointing at it and the name of the object.
-static void render_object_top_mark(const ModelObject& object, float bar_left, float bar_right, float y)
-{
-    ImDrawList*  draw_list = ImGui::GetBackgroundDrawList();
-    const ImU32  color     = ImGui::GetColorU32(ImGuiWrapper::COL_ORCA);
-    const float  arrow     = 0.6f * ImGui::GetFontSize();
-    const float  tip       = bar_left - 2.0f;
-    draw_list->AddLine({ bar_left, y }, { bar_right, y }, color, 2.0f);
-    draw_list->AddTriangleFilled({ tip, y }, { tip - arrow, y - 0.6f * arrow }, { tip - arrow, y + 0.6f * arrow }, color);
-
-    const ImVec2 text_size = ImGui::CalcTextSize(object.name.c_str());
-    const ImVec2 padding   = { 0.4f * ImGui::GetFontSize(), 0.2f * ImGui::GetFontSize() };
-    const ImVec2 text_pos  = { tip - arrow - 2.0f * padding.x - text_size.x, y - 0.5f * text_size.y };
-    draw_list->AddRectFilled({ text_pos.x - padding.x, text_pos.y - padding.y }, { text_pos.x + text_size.x + padding.x, text_pos.y + text_size.y + padding.y },
-        color, padding.y);
-    draw_list->AddText(text_pos, IM_COL32_WHITE, object.name.c_str());
-}
-
 void GLCanvas3D::LayersEditing::render_profile(const GLCanvas3D& canvas)
 {
     if (!m_enabled)
