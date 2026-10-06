@@ -352,6 +352,25 @@ bool GLCanvas3D::LayersEditing::is_allowed() const
 
 float GLCanvas3D::LayersEditing::s_overlay_window_width;
 
+// Orca: on a bar shared by several objects, the height at which a lower one ends: a line across the
+// bar, an arrow pointing at it and the name of the object.
+static void render_object_top_mark(const ModelObject& object, float bar_left, float bar_right, float y)
+{
+    ImDrawList*  draw_list = ImGui::GetBackgroundDrawList();
+    const ImU32  color     = ImGui::GetColorU32(ImGuiWrapper::COL_ORCA);
+    const float  arrow     = 0.6f * ImGui::GetFontSize();
+    const float  tip       = bar_left - 2.0f;
+    draw_list->AddLine({ bar_left, y }, { bar_right, y }, color, 2.0f);
+    draw_list->AddTriangleFilled({ tip, y }, { tip - arrow, y - 0.6f * arrow }, { tip - arrow, y + 0.6f * arrow }, color);
+
+    const ImVec2 text_size = ImGui::CalcTextSize(object.name.c_str());
+    const ImVec2 padding   = { 0.4f * ImGui::GetFontSize(), 0.2f * ImGui::GetFontSize() };
+    const ImVec2 text_pos  = { tip - arrow - 2.0f * padding.x - text_size.x, y - 0.5f * text_size.y };
+    draw_list->AddRectFilled({ text_pos.x - padding.x, text_pos.y - padding.y }, { text_pos.x + text_size.x + padding.x, text_pos.y + text_size.y + padding.y },
+        color, padding.y);
+    draw_list->AddText(text_pos, IM_COL32_WHITE, object.name.c_str());
+}
+
 void GLCanvas3D::LayersEditing::render_variable_layer_height_dialog(GLCanvas3D& canvas) {
     if (!m_enabled)
         return;
@@ -494,6 +513,15 @@ void GLCanvas3D::LayersEditing::render_variable_layer_height_dialog(GLCanvas3D& 
     imgui.end();
     ImGui::PopStyleVar(2);
     imgui.pop_toolbar_style();
+
+    if (m_bar_object_ids.size() <= 1 && m_object_max_z > 0.0f) {
+        const float cnv_width  = float(cnv_size.get_width());
+        const float cnv_height = float(cnv_size.get_height());
+        for (int object_id : m_other_object_ids)
+            if (object_id >= 0 && object_id < int(m_model->objects.size()))
+                render_object_top_mark(*m_model->objects[object_id], cnv_width - thickness_bar_width(canvas), cnv_width,
+                    cnv_height * (1.0f - float(m_model->objects[object_id]->max_z()) / m_object_max_z));
+    }
 }
 
 void GLCanvas3D::LayersEditing::render_overlay(GLCanvas3D& canvas)
@@ -536,6 +564,13 @@ int GLCanvas3D::LayersEditing::bar_at(const GLCanvas3D& canvas, float x, float y
     const int bar = std::min(bars - 1, int((w - x) / bar_w));
     // Above a lower bar the scene shows through, and the mouse belongs to it.
     return y < h * (1.0f - canvas.m_layers_editing.bar_fraction(size_t(bar))) ? -1 : bar;
+}
+
+// Whether a bar is being pointed at or painted.
+bool GLCanvas3D::LayersEditing::bar_in_focus(const GLCanvas3D& canvas) const
+{
+    const Vec2d mouse_pos = canvas.get_local_mouse_position();
+    return state == Editing || bar_at(canvas, float(mouse_pos.x()), float(mouse_pos.y())) >= 0;
 }
 
 size_t GLCanvas3D::LayersEditing::active_bar() const
@@ -769,10 +804,6 @@ void GLCanvas3D::LayersEditing::render_profile(const GLCanvas3D& canvas)
             add_line(Vec2f(to_ndc_x(left), -1.0f), Vec2f(to_ndc_x(left), top));
             add_line(Vec2f(to_ndc_x(left), top), Vec2f(to_ndc_x(left + bar_w), top));
         }
-        if (bars == 1)
-            for (int object_id : m_other_object_ids)
-                if (object_id >= 0 && object_id < int(m_model->objects.size()))
-                    render_object_top_mark(*m_model->objects[object_id], left, cnv_width, cnv_height - float(m_model->objects[object_id]->max_z()) * scale_y);
 
         GLModel::Geometry init_data;
         init_data.format = { GLModel::Geometry::EPrimitiveType::LineStrip, GLModel::Geometry::EVertexLayout::P2 };
@@ -792,9 +823,9 @@ void GLCanvas3D::LayersEditing::render_profile(const GLCanvas3D& canvas)
     GLModel lines;
     lines.init_from(std::move(lines_data));
 
-    // With several bars, the one being edited is framed in white.
+    // With several bars, the one pointed at is framed in white.
     GLModel frame;
-    if (bars > 1) {
+    if (bars > 1 && this->bar_in_focus(canvas)) {
         GLModel::Geometry frame_data;
         frame_data.format = { GLModel::Geometry::EPrimitiveType::Lines, GLModel::Geometry::EVertexLayout::P2 };
         frame_data.color  = ColorRGBA::WHITE();
@@ -869,12 +900,12 @@ void GLCanvas3D::LayersEditing::render_volumes(const GLCanvas3D& canvas, const G
 
     // Orca: the other selected objects, each with its own layer heights. The object shown goes last:
     // the bar is drawn from whatever texture was loaded last.
-    // With a profile each, the objects that are not the one being edited are toned down.
+    // With a profile each, pointing at a bar tones down the objects it does not edit.
+    const float dimming = m_each_separately && this->bar_in_focus(canvas) ? 0.6f : 0.0f;
     for (int object_id : this->edited_object_ids())
         if (object_id != this->last_object_id) {
             const ObjectTexture& other = this->other_object_texture(object_id);
-            this->render_object_volumes(volumes, *shader, object_id, other.texture, other.max_z, m_each_separately ? -1000.0f * float(other.max_z) : z_cursor,
-                m_each_separately ? 0.6f : 0.0f);
+            this->render_object_volumes(volumes, *shader, object_id, other.texture, other.max_z, m_each_separately ? -1000.0f * float(other.max_z) : z_cursor, dimming);
         }
     this->render_object_volumes(volumes, *shader, this->last_object_id, m_layers_texture, m_object_max_z, z_cursor, 0.0f);
     // Revert back to the previous shader.

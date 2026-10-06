@@ -378,6 +378,7 @@ class GLCanvas3D
         void load_texture(const LayersTexture& texture);
         // Index into m_bar_object_ids of the bar of the object shown.
         size_t active_bar() const;
+        bool bar_in_focus(const GLCanvas3D& canvas) const;
         float bar_fraction(size_t bar) const { return bar < m_bar_fractions.size() ? m_bar_fractions[bar] : 1.0f; }
         // Index of the bar under the given point, or -1.
         static int bar_at(const GLCanvas3D& canvas, float x, float y);
