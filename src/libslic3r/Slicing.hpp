@@ -159,6 +159,10 @@ inline bool equal_layering(const SlicingParameters &sp1, const SlicingParameters
 typedef std::pair<coordf_t,coordf_t> t_layer_height_range;
 typedef std::map<t_layer_height_range, ModelConfig> t_layer_config_ranges;
 
+// Orca: whether a height range leaves its layer heights to the variable layer height tool
+// (range_variable_layer_height), rather than setting its own layer_height.
+bool layer_range_follows_variable_layer_height(const ModelConfig &range_config);
+
 std::vector<coordf_t> layer_height_profile_from_ranges(
     const SlicingParameters     &slicing_params,
     const t_layer_config_ranges &layer_config_ranges);

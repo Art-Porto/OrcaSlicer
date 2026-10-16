@@ -241,7 +241,8 @@ static bool layer_height_ranges_equal(const t_layer_config_ranges &lr1, const t_
             return false;
         if (std::abs(kvp1.first.first  - kvp2.first.first ) > EPSILON ||
             std::abs(kvp1.first.second - kvp2.first.second) > EPSILON ||
-            (check_layer_height && std::abs(kvp1.second.option("layer_height")->getFloat() - kvp2.second.option("layer_height")->getFloat()) > EPSILON))
+            (check_layer_height && std::abs(kvp1.second.option("layer_height")->getFloat() - kvp2.second.option("layer_height")->getFloat()) > EPSILON) ||
+            (check_layer_height && layer_range_follows_variable_layer_height(kvp1.second) != layer_range_follows_variable_layer_height(kvp2.second)))
             return false;
     }
     return true;
