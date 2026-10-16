@@ -240,6 +240,13 @@ SlicingParameters SlicingParameters::create_from_config(
 
 // Convert layer_config_ranges to layer_height_profile. Both are referenced to z=0, meaning the raft layers are not accounted for
 // in the height profile and the printed object may be lifted by the raft thickness at the time of the G-code generation.
+// Orca: whether a height range leaves its layer heights to the variable layer height tool.
+bool layer_range_follows_variable_layer_height(const ModelConfig &range_config)
+{
+    const ConfigOption *opt = range_config.option("range_variable_layer_height");
+    return opt != nullptr && opt->getBool();
+}
+
 std::vector<coordf_t> layer_height_profile_from_ranges(
 	const SlicingParameters 	&slicing_params,
 	const t_layer_config_ranges &layer_config_ranges)
@@ -255,7 +262,10 @@ std::vector<coordf_t> layer_height_profile_from_ranges(
     for (t_layer_config_ranges::const_iterator it_range = layer_config_ranges.begin(); it_range != layer_config_ranges.end(); ++ it_range) {
         coordf_t lo = it_range->first.first;
         coordf_t hi = std::min(it_range->first.second, slicing_params.object_print_z_height());
-        coordf_t height = it_range->second.option("layer_height")->getFloat();
+        // A range that follows the variable layer height prints at the object's layer height when there is no
+        // variable layer height profile.
+        coordf_t height = layer_range_follows_variable_layer_height(it_range->second) ?
+            slicing_params.layer_height : it_range->second.option("layer_height")->getFloat();
         if (! ranges_non_overlapping.empty())
             // Trim current low with the last high.
             lo = std::max(lo, ranges_non_overlapping.back().first.second);
@@ -395,7 +405,9 @@ std::vector<double> layer_height_profile_adaptive(const SlicingParameters& slici
 
         for (auto const& [range,options] : object.layer_config_ranges) {
             if ( print_z >= range.first && print_z <= range.second) {
-                    height = options.opt_float("layer_height");
+                    // Orca: unless the range leaves its layer heights to this profile.
+                    if (!layer_range_follows_variable_layer_height(options))
+                        height = options.opt_float("layer_height");
                     break;
             };
         };

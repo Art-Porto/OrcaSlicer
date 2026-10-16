@@ -1086,6 +1086,14 @@ void PrintConfigDef::init_common_params()
     def->min = 0;
     def->set_default_value(new ConfigOptionFloat(INITIAL_LAYER_HEIGHT));
 
+    // Orca: only read from the config of a height range.
+    def = this->add("range_variable_layer_height", coBool);
+    def->label = L("Variable layer height");
+    def->tooltip = L("Let the variable layer height tool choose the layer heights inside this height range, as it does "
+                     "outside of it, instead of the layer height set for the range. The range still applies its other "
+                     "settings, such as the filament or the speeds.");
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("printable_height", coFloat);
     def->label = L("Printable height");
     def->tooltip = L("This is the maximum printable height which is limited by the height of the build area.");
