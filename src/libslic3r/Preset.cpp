@@ -151,22 +151,51 @@ std::string user_presets_lock_path(bool read_only)
 // Removes a preset file the scan could not load, and its .info, under the lock.
 // The scan passes read_only when it could not take the lock, since the file may
 // then be another instance's fresh write that it merely raced.
-static void remove_preset_files(const std::string &preset_file, bool read_only)
+// Orca: moves an unreadable preset file and its .info file aside, to "<file>.unreadable" beside them (or
+// "<file>.unreadable-2" and so on), where they are no longer loaded but can still be fixed and renamed
+// back. Removing them lost the user's settings over a single bad value. Returns where the preset file
+// went, or an empty string if it was not moved.
+static std::string move_preset_files_aside(const std::string &preset_file, bool read_only)
 {
     if (read_only)
-        return;
+        return {};
     InstanceLock instance_lock(user_presets_lock_path());
     // A symlink whose target is missing stays, since the target may come back; one
-    // that cannot even be followed is removed like any other unreadable file.
-    auto remove = [](const fs::path &file) {
+    // that cannot even be followed is moved like any other unreadable file.
+    auto present = [](const fs::path &file) {
         boost::system::error_code ec;
-        if (fs::status(file, ec).type() != fs::file_not_found)
-            fs::remove(file, ec);
+        return fs::status(file, ec).type() != fs::file_not_found;
     };
-    fs::path file_path(preset_file);
-    remove(file_path);
-    file_path.replace_extension(".info");
-    remove(file_path);
+    auto taken = [](const fs::path &file) {
+        boost::system::error_code ec;
+        return fs::symlink_status(file, ec).type() != fs::file_not_found;
+    };
+    const fs::path json_path(preset_file);
+    fs::path       info_path(preset_file);
+    info_path.replace_extension(".info");
+    if (! present(json_path))
+        return {};
+    for (int attempt = 1; attempt <= 100; ++ attempt) {
+        const std::string suffix     = attempt == 1 ? ".unreadable" : ".unreadable-" + std::to_string(attempt);
+        const fs::path    json_aside = json_path.string() + suffix;
+        const fs::path    info_aside = info_path.string() + suffix;
+        if (taken(json_aside) || taken(info_aside))
+            continue;
+        boost::system::error_code ec;
+        fs::rename(json_path, json_aside, ec);
+        if (ec) {
+            BOOST_LOG_TRIVIAL(error) << "can not move the unreadable preset " << preset_file << " aside: " << ec.message();
+            return {};
+        }
+        if (present(info_path)) {
+            fs::rename(info_path, info_aside, ec);
+            if (ec)
+                BOOST_LOG_TRIVIAL(error) << "can not move " << info_path.string() << " aside: " << ec.message();
+        }
+        BOOST_LOG_TRIVIAL(warning) << "moved the unreadable preset " << preset_file << " to " << json_aside.string();
+        return json_aside.string();
+    }
+    return {};
 }
 
 std::string get_preset_bare_name(const std::string &canonical_name)
@@ -1780,6 +1809,24 @@ void PresetCollection::reset(bool delete_files)
     m_map_system_profile_renamed.clear();
 }
 
+void PresetCollection::remove_user_and_bundle_presets()
+{
+    const std::string selected = this->get_selected_preset_name();
+    lock();
+    for (auto it = m_presets.begin(); it != m_presets.end();) {
+        if (it->is_default || it->is_system || it->is_external || it->is_project_embedded) {
+            ++ it;
+            continue;
+        }
+        set_printer_hold_alias(it->alias, *it, true);
+        it = m_presets.erase(it);
+    }
+    unlock();
+    update_map_alias_to_profile_name();
+    // The selected preset may be gone, in which case the first visible one is selected.
+    this->select_preset_by_name(selected, true);
+}
+
 void PresetCollection::add_default_preset(const std::vector<std::string> &keys, const Slic3r::StaticPrintConfig &defaults, const std::string &preset_name)
 {
     // Insert just the default preset.
@@ -1829,6 +1876,10 @@ PresetCollection::UserPresetLoad PresetCollection::resolve_user_preset(
     Preset &preset = out.preset;
     preset.bundle_id = load_origin.bundle_id;
     preset.file = file.string();
+    // Orca: why the preset is not loaded, for the user to be told.
+    auto not_loaded = [this, &out, &canonical_name, &file](PresetLoadProblem::Reason reason, const std::string &parent = {}) {
+        out.problem = PresetLoadProblem{ m_type, canonical_name, file.string(), reason, parent, {} };
+    };
     // Before either file is parsed, so a save that lands during the parse still shows
     // up as a difference when commit compares.
     out.on_disk = PresetFilesOnDisk::read(file);
@@ -1850,6 +1901,7 @@ PresetCollection::UserPresetLoad PresetCollection::resolve_user_preset(
             out.substitutions.push_back({ preset.name, m_type, PresetConfigSubstitutions::Source::UserFile, preset.file, std::move(config_substitutions) });
         if (!reason.empty()) {
             out.discard_file = true;
+            not_loaded(PresetLoadProblem::Reason::Unreadable);
             out.errors.push_back((boost::format("parse config %1% failed") % preset.file).str());
             return out;
         }
@@ -1857,6 +1909,7 @@ PresetCollection::UserPresetLoad PresetCollection::resolve_user_preset(
         std::string version_str = key_values[BBL_JSON_KEY_VERSION];
         boost::optional<Semver> version = Semver::parse(version_str);
         if (!version) {
+            not_loaded(PresetLoadProblem::Reason::InvalidVersion);
             out.errors.push_back((boost::format("invalid version %1% in config %2%") % version_str % preset.file).str());
             return out;
         }
@@ -1897,6 +1950,7 @@ PresetCollection::UserPresetLoad PresetCollection::resolve_user_preset(
         else {
             auto inherits_config2 = dynamic_cast<ConfigOptionString *>(inherits_config);
             if ((inherits_config2 && !inherits_config2->value.empty())) {
+                not_loaded(PresetLoadProblem::Reason::MissingParent, inherits_config2->value);
                 out.errors.push_back((boost::format("can not find parent %1% for config %2%!") % inherits_config2->value % preset.file).str());
                 return out;
             }
@@ -1929,10 +1983,12 @@ PresetCollection::UserPresetLoad PresetCollection::resolve_user_preset(
         out.complete = true;
     } catch (const std::ifstream::failure &err) {
         out.discard_file = true;
+        not_loaded(PresetLoadProblem::Reason::Unreadable);
         out.errors.push_back((boost::format("The user-config cannot be loaded: %1%. Reason: %2%") % preset.file % err.what()).str());
         //throw Slic3r::RuntimeError(std::string("The selected preset cannot be loaded: ") + preset.file + "\n\tReason: " + err.what());
     } catch (const std::runtime_error &err) {
         out.discard_file = true;
+        not_loaded(PresetLoadProblem::Reason::Unreadable);
         out.errors.push_back((boost::format("Failed loading the user-config file: %1%. Reason: %2%") % preset.file % err.what()).str());
         //throw Slic3r::RuntimeError(std::string("Failed loading the preset file: ") + preset.file + "\n\tReason: " + err.what());
     }
@@ -1953,8 +2009,13 @@ void PresetCollection::commit_user_preset(UserPresetLoad &&loaded, std::deque<Pr
         ++m_errors;
         BOOST_LOG_TRIVIAL(error) << error;
     }
-    if (loaded.discard_file)
-        remove_preset_files(loaded.preset.file, read_only);
+    if (loaded.discard_file) {
+        const std::string moved_to = move_preset_files_aside(loaded.preset.file, read_only);
+        if (loaded.problem)
+            loaded.problem->moved_to = moved_to;
+    }
+    if (loaded.problem)
+        m_load_problems.push_back(std::move(*loaded.problem));
     if (!loaded.install)
         return;
 
@@ -2056,7 +2117,7 @@ void PresetCollection::load_presets(
         [&](size_t i, UserPresetLoad &&loaded) {
             // Resolve read the files without the lock, so another instance may have saved
             // over them since. A file that changed is resolved again under the lock before
-            // commit removes or rewrites it, which also keeps its .json and .info from two
+            // commit moves it aside or rewrites it, which also keeps its .json and .info from two
             // different saves apart. Without the lock nothing is checked, so commit leaves
             // the files alone.
             const std::string lock_path = user_presets_lock_path(read_only);
@@ -2065,7 +2126,7 @@ void PresetCollection::load_presets(
                 const PresetFilesOnDisk   on_disk = PresetFilesOnDisk::read(files[i].path);
                 boost::system::error_code ec;
                 // The link itself, and a stat error counts as present, so a file that is
-                // there but cannot be read is still counted and removed by commit.
+                // there but cannot be read is still counted and moved aside by commit.
                 if (! on_disk.json && fs::symlink_status(files[i].path, ec).type() == fs::file_not_found)
                     return; // removed by another instance since it was read
                 if (! (on_disk == loaded.on_disk)) {
@@ -2075,7 +2136,7 @@ void PresetCollection::load_presets(
                 }
             }
             const bool leave_files = read_only || (! lock_path.empty() && ! instance_lock.locked());
-            // Committing can remove an unreadable preset's file, and a filesystem error
+            // Committing can move an unreadable preset's file aside, and a filesystem error
             // there is reported without stopping the rest of the directory.
             try {
                 this->commit_user_preset(std::move(loaded), presets_loaded, substitutions, preset_loaded_fn, leave_files);

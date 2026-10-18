@@ -593,6 +593,10 @@ std::vector<NativeCommand> build_command_catalog()
         wxGetApp().check_legacy_user_filament_presets(true);
         return AppActionRunResult{AppActionRunResult::Level::Success};
     });
+    add("help_reload_user_presets", L("Reload User Presets"), L("Help"), [](const std::string&) {
+        wxGetApp().reload_user_presets();
+        return AppActionRunResult{AppActionRunResult::Level::Success};
+    });
     add("help_troubleshoot", L("Troubleshoot Center"), L("Help"), [](const std::string&) {
         wxGetApp().troubleshoot();
         return AppActionRunResult{AppActionRunResult::Level::Success};

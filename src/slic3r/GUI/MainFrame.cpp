@@ -2859,6 +2859,10 @@ wxMenu* MainFrame::generate_help_menu()
         _L("Bring back filament presets that a profile update removed from printers they were made for"),
         [](wxCommandEvent&) { wxGetApp().check_legacy_user_filament_presets(true); });
 
+    append_menu_item(helpMenu, wxID_ANY, _L("Reload User Presets"),
+        _L("Load your presets again from their folder, and list those that could not be loaded"),
+        [](wxCommandEvent&) { wxGetApp().reload_user_presets(); });
+
     helpMenu->AppendSeparator();
 
     // Troubleshoot center

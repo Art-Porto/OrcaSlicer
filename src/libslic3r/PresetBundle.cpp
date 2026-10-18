@@ -1432,6 +1432,10 @@ PresetsConfigSubstitutions PresetBundle::load_user_presets(std::string user, For
     bundles.m_bundles.clear();
     bundles.WriteUnlock();
 
+    // Orca: what this load finds is what the user is told about.
+    for (PresetCollection *presets : std::initializer_list<PresetCollection *>{ &this->prints, &this->filaments, &this->printers })
+        presets->clear_load_problems();
+
     const auto user_load_t0 = std::chrono::steady_clock::now();
 
     // Reads one bundle's metadata under the lock, per file, so the lock is never
@@ -1535,6 +1539,42 @@ PresetsConfigSubstitutions PresetBundle::load_user_presets(std::string user, For
     set_calibrate_printer("");
 
     return PresetsConfigSubstitutions();
+}
+
+PresetsConfigSubstitutions PresetBundle::reload_user_presets(AppConfig &config, ForwardCompatibilitySubstitutionRule substitution_rule)
+{
+    // What load_selections() restores below.
+    this->export_selections(config);
+    for (PresetCollection *presets : std::initializer_list<PresetCollection *>{ &this->prints, &this->filaments, &this->printers })
+        presets->remove_user_and_bundle_presets();
+
+    std::string folder = config.get("preset_folder");
+    if (folder.empty())
+        folder = DEFAULT_USER_FOLDER_NAME;
+    PresetsConfigSubstitutions substitutions;
+    std::string                errors;
+    try {
+        substitutions = this->load_user_presets(folder, substitution_rule);
+    } catch (const std::runtime_error &err) {
+        errors = err.what();
+    }
+
+    // As load_presets() does after loading the user presets at start up.
+    this->normalize_compatible_presets();
+    this->update_multi_material_filament_presets();
+    this->update_compatible(PresetSelectCompatibleType::Never);
+    this->load_selections(config);
+    if (! errors.empty())
+        throw Slic3r::RuntimeError(errors);
+    return substitutions;
+}
+
+std::vector<PresetLoadProblem> PresetBundle::user_preset_load_problems() const
+{
+    std::vector<PresetLoadProblem> problems;
+    for (const PresetCollection *presets : std::initializer_list<const PresetCollection *>{ &this->printers, &this->filaments, &this->prints })
+        problems.insert(problems.end(), presets->load_problems().begin(), presets->load_problems().end());
+    return problems;
 }
 
 static bool is_single_path_component(const std::string& value)

@@ -52,6 +52,7 @@
 #include <set>
 #include "libslic3r/TriangleSelector.hpp"
 #include <iterator>
+#include <ios>
 #include <miniz.h>
 
 #ifndef _WIN32
@@ -1049,7 +1050,14 @@ TEST_CASE("Repeated loads of a user preset directory produce the same presets", 
     CHECK(names_per_run[2] == names_per_run[0]);
 }
 
-TEST_CASE("An unreadable user preset is counted and removed while the rest still load", "[Preset][Bundle]")
+// The whole content of a file.
+static std::string preset_file_content(const fs::path &file)
+{
+    std::ifstream in(file.string(), std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+TEST_CASE("An unreadable user preset is counted and moved aside while the rest still load", "[Preset][Bundle]")
 {
     ScopedTemporaryDir   temp_dir;
     RenameTestCollection coll;
@@ -1067,9 +1075,107 @@ TEST_CASE("An unreadable user preset is counted and removed while the rest still
 
     CHECK(coll.error_count() == 1);
     CHECK(coll.find_preset("Broken") == nullptr);
+    // Out of the way of the next load, with what the user wrote in it.
     CHECK_FALSE(fs::exists(dir / "Broken.json"));
+    CHECK(preset_file_content(dir / "Broken.json.unreadable") == "{not-json");
+    REQUIRE(coll.load_problems().size() == 1);
+    CHECK(coll.load_problems().front().name == "Broken");
+    CHECK(coll.load_problems().front().reason == PresetLoadProblem::Reason::Unreadable);
+    CHECK(fs::path(coll.load_problems().front().moved_to) == dir / "Broken.json.unreadable");
     for (int i = 0; i < 20; ++ i)
         CHECK(coll.find_preset("Good " + std::to_string(i)) != nullptr);
+}
+
+TEST_CASE("A user preset with one value that cannot be read keeps its files, moved aside with a new name each time", "[Preset][Bundle]")
+{
+    // A typo in a single value, here a word for a number of walls, makes the whole file unreadable.
+    ScopedTemporaryDir temp_dir;
+    const fs::path     dir     = temp_dir.path() / PRESET_PRINT_NAME;
+    const std::string  content = R"({"type":"process","name":"Bad Value","from":"User","version":"1.0.0","inherits":"","wall_loops":"three"})";
+    const std::string  info    = "sync_info = \nuser_id = \nsetting_id = \nbase_id = \nupdated_time = 1700000000\n";
+    fs::create_directories(dir);
+
+    const std::pair<const char *, const char *> asides[] = { { "Bad Value.json.unreadable", "Bad Value.info.unreadable" },
+                                                             { "Bad Value.json.unreadable-2", "Bad Value.info.unreadable-2" } };
+    for (const auto &[aside, info_aside] : asides) {
+        INFO(aside);
+        std::ofstream((dir / "Bad Value.json").string(), std::ios::binary) << content;
+        std::ofstream((dir / "Bad Value.info").string(), std::ios::binary) << info;
+
+        RenameTestCollection       coll;
+        PresetsConfigSubstitutions substitutions;
+        coll.load_presets(temp_dir.path().string(), PRESET_PRINT_NAME, substitutions,
+                          ForwardCompatibilitySubstitutionRule::EnableSilent);
+
+        CHECK(coll.find_preset("Bad Value") == nullptr);
+        REQUIRE(coll.load_problems().size() == 1);
+        CHECK(coll.load_problems().front().reason == PresetLoadProblem::Reason::Unreadable);
+        CHECK(fs::path(coll.load_problems().front().moved_to) == dir / aside);
+        CHECK_FALSE(fs::exists(dir / "Bad Value.json"));
+        CHECK_FALSE(fs::exists(dir / "Bad Value.info"));
+        CHECK(preset_file_content(dir / aside) == content);
+        CHECK(preset_file_content(dir / info_aside) == info);
+    }
+}
+
+TEST_CASE("A user preset whose parent is not loaded is reported with that parent and keeps its file", "[Preset][Bundle]")
+{
+    ScopedTemporaryDir   temp_dir;
+    RenameTestCollection coll;
+    const fs::path       file = temp_dir.path() / PRESET_PRINT_NAME / "Orphan.json";
+    write_minimal_child(file, "Orphan", "Uninstalled Vendor Process");
+
+    PresetsConfigSubstitutions substitutions;
+    coll.load_presets(temp_dir.path().string(), PRESET_PRINT_NAME, substitutions,
+                      ForwardCompatibilitySubstitutionRule::EnableSilent);
+
+    CHECK(coll.find_preset("Orphan") == nullptr);
+    REQUIRE(coll.load_problems().size() == 1);
+    const PresetLoadProblem &problem = coll.load_problems().front();
+    CHECK(problem.type == Preset::TYPE_PRINT);
+    CHECK(problem.name == "Orphan");
+    CHECK(problem.reason == PresetLoadProblem::Reason::MissingParent);
+    CHECK(problem.parent == "Uninstalled Vendor Process");
+    CHECK(fs::path(problem.file) == file);
+    CHECK(problem.moved_to.empty());
+    CHECK(fs::exists(file));
+}
+
+TEST_CASE("Reloading the user presets picks up files changed outside of OrcaSlicer and keeps the selection", "[Preset][Bundle]")
+{
+    ScopedPresetDataDir data_dir;
+    PresetBundle        bundle;
+    AppConfig           app_config;
+    const fs::path      user_dir = data_dir.tmp.path() / PRESET_USER_DIR / DEFAULT_USER_FOLDER_NAME;
+    const DynamicPrintConfig &defaults = bundle.prints.default_preset().config;
+    write_preset_with_inherits(bundle.printers.default_preset().config, user_dir / PRESET_PRINTER_NAME / "My Printer.json", "My Printer", "");
+    write_print_preset_with_layer_height(defaults, user_dir / PRESET_PRINT_NAME / "Mine.json", "Mine", 0.20);
+    write_minimal_child(user_dir / PRESET_PRINT_NAME / "Orphan.json", "Orphan", "Uninstalled Vendor Process");
+    bundle.load_user_presets(DEFAULT_USER_FOLDER_NAME, ForwardCompatibilitySubstitutionRule::EnableSilent);
+    REQUIRE(bundle.prints.find_preset("Mine") != nullptr);
+    REQUIRE(bundle.prints.find_preset("Orphan") == nullptr);
+    REQUIRE(bundle.user_preset_load_problems().size() == 1);
+    bundle.printers.select_preset_by_name("My Printer", true);
+    bundle.prints.select_preset_by_name("Mine", true);
+    bundle.update_compatible(PresetSelectCompatibleType::Never);
+    REQUIRE(bundle.prints.get_selected_preset_name() == "Mine");
+
+    // Changed, added and fixed outside of OrcaSlicer.
+    write_print_preset_with_layer_height(defaults, user_dir / PRESET_PRINT_NAME / "Mine.json", "Mine", 0.30);
+    write_print_preset_with_layer_height(defaults, user_dir / PRESET_PRINT_NAME / "Added.json", "Added", 0.25);
+    write_print_preset_with_layer_height(defaults, user_dir / PRESET_PRINT_NAME / "Orphan.json", "Orphan", 0.15);
+    bundle.reload_user_presets(app_config, ForwardCompatibilitySubstitutionRule::EnableSilent);
+
+    const Preset *mine = bundle.prints.find_preset("Mine");
+    REQUIRE(mine != nullptr);
+    CHECK_THAT(layer_height(*mine), Catch::Matchers::WithinAbs(0.30, 1e-6));
+    CHECK(std::count_if(bundle.prints.begin(), bundle.prints.end(), [](const Preset &preset) { return preset.name == "Mine"; }) == 1);
+    CHECK(bundle.prints.find_preset("Added") != nullptr);
+    CHECK(bundle.prints.find_preset("Orphan") != nullptr);
+    CHECK(bundle.user_preset_load_problems().empty());
+    CHECK(bundle.printers.get_selected_preset_name() == "My Printer");
+    CHECK(bundle.prints.get_selected_preset_name() == "Mine");
+    CHECK_THAT(layer_height(bundle.prints.get_edited_preset()), Catch::Matchers::WithinAbs(0.30, 1e-6));
 }
 
 TEST_CASE("A user filament naming no compatible printer gets the one after its @, in memory and on disk", "[Preset][Bundle]")

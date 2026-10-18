@@ -1136,8 +1136,10 @@ void GUI_App::post_init()
             }
 
             this->check_new_version_sf();
-            if (!cw_showed)
+            if (!cw_showed) {
                 this->check_legacy_user_filament_presets(false);
+                this->check_user_preset_load_problems(false);
+            }
             const auto cloud_provider = get_printer_cloud_provider();
             if (is_user_login(cloud_provider) && !app_config->get_stealth_mode()) {
               // this->check_privacy_version(0);
@@ -7095,6 +7097,106 @@ void GUI_App::check_legacy_user_filament_presets(bool by_user)
     MessageDialog(mainframe, message, _L("Migrate Filament Presets"), wxOK | (failed.empty() ? wxICON_INFORMATION : wxICON_WARNING)).ShowModal();
 }
 
+// Orca: one line of the list of user presets that were not loaded.
+static wxString user_preset_load_problem_line(const PresetLoadProblem &problem)
+{
+    const wxString type = problem.type == Preset::TYPE_PRINTER  ? _L("Printer") :
+                          problem.type == Preset::TYPE_FILAMENT ? _L("Filament") :
+                                                                  _L("Process");
+    const wxString name = from_u8(problem.name);
+    switch (problem.reason) {
+    case PresetLoadProblem::Reason::MissingParent:
+        // TRN %1% is the type of a preset (Printer, Filament or Process), %2% its name, %3% the name of the preset it is based on.
+        return format_wxstr(_L("%1% \"%2%\": based on \"%3%\", which could not be found."), type, name, from_u8(problem.parent));
+    case PresetLoadProblem::Reason::InvalidVersion:
+        // TRN %1% is the type of a preset (Printer, Filament or Process), %2% its name.
+        return format_wxstr(_L("%1% \"%2%\": its version could not be read."), type, name);
+    case PresetLoadProblem::Reason::Unreadable:
+        break;
+    }
+    if (problem.moved_to.empty())
+        // TRN %1% is the type of a preset (Printer, Filament or Process), %2% its name.
+        return format_wxstr(_L("%1% \"%2%\": its file could not be read."), type, name);
+    // TRN %1% is the type of a preset (Printer, Filament or Process), %2% its name, %3% the new name of its file.
+    return format_wxstr(_L("%1% \"%2%\": its file could not be read, so it was renamed to %3%."), type, name,
+                        from_u8(boost::filesystem::path(problem.moved_to).filename().string()));
+}
+
+void GUI_App::check_user_preset_load_problems(bool by_user)
+{
+    if (!preset_bundle || !app_config)
+        return;
+    if (!by_user && m_user_preset_pull_pending) {
+        m_user_preset_load_check_due = true;
+        return;
+    }
+    m_user_preset_load_check_due = false;
+
+    // The files of the presets the user chose not to be reminded of, of those still not loaded.
+    const std::vector<PresetLoadProblem> all_problems = preset_bundle->user_preset_load_problems();
+    std::vector<std::string>             dismissed;
+    const std::string                    dismissed_value = app_config->get("user_preset_load_problems_dismissed");
+    if (!dismissed_value.empty())
+        boost::split(dismissed, dismissed_value, boost::is_any_of("|"));
+    auto is_dismissed = [&dismissed](const PresetLoadProblem &problem) {
+        return std::find(dismissed.begin(), dismissed.end(), problem.file) != dismissed.end();
+    };
+    dismissed.erase(std::remove_if(dismissed.begin(), dismissed.end(), [&all_problems](const std::string &file) {
+        return std::none_of(all_problems.begin(), all_problems.end(), [&file](const PresetLoadProblem &problem) { return problem.file == file; });
+    }), dismissed.end());
+
+    std::vector<PresetLoadProblem> problems;
+    for (const PresetLoadProblem &problem : all_problems)
+        if (by_user || !is_dismissed(problem))
+            problems.push_back(problem);
+    if (problems.empty()) {
+        if (by_user)
+            MessageDialog(mainframe, _L("All your user presets were loaded."), _L("User Presets Not Loaded"), wxOK | wxICON_INFORMATION).ShowModal();
+        return;
+    }
+
+    wxString message = _L("Some of your presets could not be loaded, so they are not listed. Once they are fixed, "
+                          "Help > Reload User Presets loads them without a restart.") + "\n";
+    for (const PresetLoadProblem &problem : problems)
+        message += "\n" + user_preset_load_problem_line(problem);
+    message += "\n\n" + _L("Open the folder of your user presets?");
+    RichMessageDialog dlg(mainframe, message, _L("User Presets Not Loaded"), wxYES | wxNO | wxICON_WARNING);
+    if (!by_user)
+        dlg.ShowCheckBox(_L("Don't remind me about these presets again"));
+    const bool open_folder = dlg.ShowModal() == wxID_YES;
+    if (dlg.IsCheckBoxChecked()) {
+        // A file that was moved aside is not loaded again, so it is not reported again either.
+        for (const PresetLoadProblem &problem : problems)
+            if (problem.moved_to.empty() && !is_dismissed(problem))
+                dismissed.push_back(problem.file);
+    }
+    app_config->set("user_preset_load_problems_dismissed", boost::algorithm::join(dismissed, "|"));
+    if (open_folder) {
+        std::string folder = app_config->get("preset_folder");
+        if (folder.empty())
+            folder = DEFAULT_USER_FOLDER_NAME;
+        desktop_open_any_folder((boost::filesystem::path(data_dir()) / PRESET_USER_DIR / folder).make_preferred().string());
+    }
+}
+
+void GUI_App::reload_user_presets()
+{
+    if (!preset_bundle || !app_config || !mainframe)
+        return;
+    // Reloading selects the presets again, which drops their unsaved changes.
+    if (!check_and_save_current_preset_changes(_L("Reload User Presets"), _L("Reloading the user presets while some presets are modified."),
+                                               false, true))
+        return;
+    try {
+        preset_bundle->reload_user_presets(*app_config, ForwardCompatibilitySubstitutionRule::Enable);
+    } catch (const std::exception &ex) {
+        show_error(mainframe, ex.what());
+    }
+    load_current_presets();
+    mainframe->update_side_preset_ui();
+    check_user_preset_load_problems(true);
+}
+
 //BBS reload when logout
 void GUI_App::remove_user_presets()
 {
@@ -7927,6 +8029,8 @@ void GUI_App::start_sync_user_preset(bool with_progress_dlg)
                     m_user_preset_pull_pending = false;
                     if (m_legacy_filament_check_due)
                         check_legacy_user_filament_presets(false);
+                    if (m_user_preset_load_check_due)
+                        check_user_preset_load_problems(false);
                 });
 
             // For orca specific syncing

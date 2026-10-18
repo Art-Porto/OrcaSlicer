@@ -551,6 +551,28 @@ struct PresetConfigSubstitutions {
 // PrusaSlicer and reading the user Print / Filament / Printer profiles.
 using PresetsConfigSubstitutions = std::vector<PresetConfigSubstitutions>;
 
+// Orca: a user preset file that was found but not loaded, and why, so that the user can be told.
+struct PresetLoadProblem {
+    enum class Reason {
+        // The file could not be read, or one of its values could not. It is moved aside rather than
+        // removed, see moved_to.
+        Unreadable,
+        // The preset it inherits is not loaded, e.g. it comes from a vendor that is not installed.
+        MissingParent,
+        // Its version could not be read.
+        InvalidVersion,
+    };
+    Preset::Type type;
+    // The preset's name, as its file names it.
+    std::string  name;
+    std::string  file;
+    Reason       reason;
+    // MissingParent: the preset it inherits.
+    std::string  parent;
+    // Unreadable: where the file was moved, or empty if it could not be.
+    std::string  moved_to;
+};
+
 // A user filament preset made against an older release that no longer shows on printers its system parent
 // listed then, and those printers. Migrating it writes them into the preset's own compatible_printers.
 struct LegacyUserFilamentPreset {
@@ -859,6 +881,12 @@ public:
     bool            has_defaults_only() const   { return m_presets.size() <= m_num_default_presets; }
     // How many presets this collection refused or repaired while loading.
     int             error_count() const         { return m_errors; }
+    // Orca: the user preset files this collection found but did not load, since the problems were last cleared.
+    const std::vector<PresetLoadProblem>& load_problems() const { return m_load_problems; }
+    void            clear_load_problems()       { m_load_problems.clear(); }
+    // Orca: removes every preset that was loaded from the user presets folder, or from a bundle in it, so
+    // that they can be loaded again. The selection is left to the caller to restore.
+    void            remove_user_and_bundle_presets();
 
     // For Print / Filament presets, disable those, which are not compatible with the printer.
     template<typename PreferedCondition>
@@ -973,8 +1001,10 @@ private:
         // A filament preset that named no compatible printer and was given one from
         // its name, which commit writes back to its file.
         bool        save_compatible_printers { false };
-        // Unreadable, so commit removes it and its .info file.
+        // Unreadable, so commit moves it and its .info file aside.
         bool        discard_file { false };
+        // Orca: why the preset is not loaded, which commit records.
+        std::optional<PresetLoadProblem> problem;
         // The .info file read beside the preset, which commit logs.
         std::string info_file;
         // Both files as they were before the preset was read from them. Resolve runs
@@ -1102,6 +1132,7 @@ private:
 
     // Orca: used for validation only
     int m_errors = 0;
+    std::vector<PresetLoadProblem> m_load_problems;
 };
 
 // Printer supports the FFF and SLA technologies, with different set of configuration values,
