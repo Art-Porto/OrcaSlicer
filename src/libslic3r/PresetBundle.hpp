@@ -302,6 +302,12 @@ public:
     // BBS Load user presets
     PresetsConfigSubstitutions load_user_presets(std::string user, ForwardCompatibilitySubstitutionRule rule, bool read_only = false);
     PresetsConfigSubstitutions load_user_presets(AppConfig &config, std::map<std::string, std::map<std::string, std::string>>& my_presets, ForwardCompatibilitySubstitutionRule rule);
+    // Orca: loads the user presets again from the user presets folder, so that files changed outside of
+    // OrcaSlicer are picked up without a restart, and keeps the selections that are still there.
+    // Throws the errors the load collected, after the selections are restored.
+    PresetsConfigSubstitutions reload_user_presets(AppConfig &config, ForwardCompatibilitySubstitutionRule rule);
+    // Orca: the user preset files the last load of the user presets folder found but did not load.
+    std::vector<PresetLoadProblem> user_preset_load_problems() const;
 
     bool reload_local_bundle(const std::string& preset_folder, const std::string& bundle_id, std::string* error = nullptr);
     std::vector<std::string> list_local_bundle_ids(const std::string& preset_folder);

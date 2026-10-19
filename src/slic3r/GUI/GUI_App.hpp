@@ -357,6 +357,7 @@ private:
     std::atomic<bool>    m_sync_user_presets_now {false}; // request the sync loop to push user presets on its next tick
     bool                 m_user_preset_pull_pending {false}; // set when a sync thread starts, cleared once its pull is applied; a failed pull or a stopped sync leaves it set
     bool                 m_legacy_filament_check_due {false}; // the startup check waits for that pull
+    bool                 m_user_preset_load_check_due {false}; // so does the startup check of the presets not loaded
     bool                 m_legacy_filament_check_running {false}; // a check is in progress, its dialog may be open
     std::atomic<bool>    m_migration_retry_pending {false};
     bool             m_is_dark_mode{ false };
@@ -600,6 +601,13 @@ public:
     // reminded; while the user presets sync with the cloud, it waits until they have been pulled. by_user also
     // reports when there is nothing to migrate.
     void            check_legacy_user_filament_presets(bool by_user);
+    // Orca: lists the user preset files that were found but not loaded, and why, and offers to open their
+    // folder. At startup it leaves out those the user chose not to be reminded of, and waits for the cloud
+    // pull as the check above does. by_user also reports when every preset was loaded.
+    void            check_user_preset_load_problems(bool by_user);
+    // Orca: loads the user presets again from their folder, so that files fixed or added outside of
+    // OrcaSlicer are picked up without a restart, then lists those that were not loaded.
+    void            reload_user_presets();
     bool            process_network_msg(std::string dev_id, std::string msg);
     void            request_new_version(int by_user);
     void            enter_force_upgrade();
