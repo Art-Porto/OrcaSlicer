@@ -198,3 +198,59 @@ TEST_CASE("Tree support toolpaths do not depend on the MST tie order", "[TreeSup
         { "support_line_width",           0.4 },
     });
 }
+
+namespace {
+
+// The points of the walls and of the infill of one support area.
+struct BaseAreaPaths
+{
+    Points walls;
+    Points infill;
+};
+
+void collect_base_area_paths(const ExtrusionEntity &entity, BaseAreaPaths &out)
+{
+    if (entity.is_collection()) {
+        for (const ExtrusionEntity *child : static_cast<const ExtrusionEntityCollection &>(entity).entities)
+            collect_base_area_paths(*child, out);
+    } else if (entity.role() == erSupportMaterial) {
+        entity.collect_points(entity.is_loop() ? out.walls : out.infill);
+    }
+}
+
+} // namespace
+
+// A support area that gets infill keeps a wall around it when Support wall loops is 0 (auto).
+// Without one, the infill lines of each layer stand on those below as separate plates, and a tall
+// support folds over. Infill only areas still get short walls where the infill does not reach,
+// so the check is that a wall goes around the infill, not that there is one.
+TEST_CASE("Tree support infill keeps a wall around it when the wall count is auto", "[TreeSupport]")
+{
+    const char *style = GENERATE("tree_slim", "tree_strong", "tree_hybrid");
+    CAPTURE(style);
+    Slic3r::Print print;
+    slice_with_tree_support(two_tier_mesh(), print, style, 30, 1, 0, {
+        { "support_base_pattern",    "rectilinear" },
+        { "tree_support_wall_count", 0 },
+    });
+
+    const auto             &layers   = print.objects().front()->support_layers();
+    size_t                  infilled = 0;
+    // The first layer is a flange with a sheath of its own.
+    for (size_t layer_idx = 1; layer_idx < layers.size(); ++ layer_idx)
+        for (const ExtrusionEntity *area : layers[layer_idx]->support_fills.entities) {
+            BaseAreaPaths paths;
+            collect_base_area_paths(*area, paths);
+            if (paths.infill.empty())
+                continue;
+            ++ infilled;
+            CAPTURE(layers[layer_idx]->print_z);
+            REQUIRE_FALSE(paths.walls.empty());
+            const BoundingBox walls(paths.walls);
+            const BoundingBox infill(paths.infill);
+            CHECK(walls.contains(infill.min));
+            CHECK(walls.contains(infill.max));
+        }
+    // Without an infilled area the check above passes vacuously.
+    REQUIRE(infilled > 0);
+}
