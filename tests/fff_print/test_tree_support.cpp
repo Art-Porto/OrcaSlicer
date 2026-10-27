@@ -218,39 +218,89 @@ void collect_base_area_paths(const ExtrusionEntity &entity, BaseAreaPaths &out)
     }
 }
 
-} // namespace
-
-// A support area that gets infill keeps a wall around it when Support wall loops is 0 (auto).
-// Without one, the infill lines of each layer stand on those below as separate plates, and a tall
-// support folds over. Infill only areas still get short walls where the infill does not reach,
-// so the check is that a wall goes around the infill, not that there is one.
-TEST_CASE("Tree support infill keeps a wall around it when the wall count is auto", "[TreeSupport]")
+// The base areas of every support layer but the first, which is a flange with a sheath of its own.
+std::vector<BaseAreaPaths> base_areas(const Slic3r::Print &print)
 {
-    const char *style = GENERATE("tree_slim", "tree_strong", "tree_hybrid");
-    CAPTURE(style);
-    Slic3r::Print print;
-    slice_with_tree_support(two_tier_mesh(), print, style, 30, 1, 0, {
-        { "support_base_pattern",    "rectilinear" },
-        { "tree_support_wall_count", 0 },
-    });
-
-    const auto             &layers   = print.objects().front()->support_layers();
-    size_t                  infilled = 0;
-    // The first layer is a flange with a sheath of its own.
+    std::vector<BaseAreaPaths> out;
+    const auto &layers = print.objects().front()->support_layers();
     for (size_t layer_idx = 1; layer_idx < layers.size(); ++ layer_idx)
         for (const ExtrusionEntity *area : layers[layer_idx]->support_fills.entities) {
             BaseAreaPaths paths;
             collect_base_area_paths(*area, paths);
-            if (paths.infill.empty())
-                continue;
-            ++ infilled;
-            CAPTURE(layers[layer_idx]->print_z);
-            REQUIRE_FALSE(paths.walls.empty());
-            const BoundingBox walls(paths.walls);
-            const BoundingBox infill(paths.infill);
-            CHECK(walls.contains(infill.min));
-            CHECK(walls.contains(infill.max));
+            if (! paths.walls.empty() || ! paths.infill.empty())
+                out.emplace_back(std::move(paths));
         }
-    // Without an infilled area the check above passes vacuously.
+    return out;
+}
+
+// Infill that a wall goes around. Infill only areas still get short walls where the infill does not
+// reach, so the check is that a wall goes around the infill, not that there is one.
+bool walled(const BaseAreaPaths &paths)
+{
+    if (paths.walls.empty())
+        return false;
+    const BoundingBox walls(paths.walls);
+    const BoundingBox infill(paths.infill);
+    return walls.contains(infill.min) && walls.contains(infill.max);
+}
+
+size_t count_areas(const std::vector<BaseAreaPaths> &areas, bool with_infill)
+{
+    return std::count_if(areas.begin(), areas.end(), [with_infill](const BaseAreaPaths &paths) {
+        return ! paths.walls.empty() && paths.infill.empty() != with_infill;
+    });
+}
+
+// A tall support trunk, merged from many branches, under a wide plate.
+TriangleMesh trunk_mesh()
+{
+    TriangleMesh column = make_cube(6, 6, 40);
+    TriangleMesh plate  = make_cube(40, 40, 3);
+    column.translate(17.f, 17.f, 0.f);
+    plate.translate(0.f, 0.f, 39.f);
+    TriangleMesh mesh = column;
+    mesh.merge(plate);
+    return mesh;
+}
+
+std::vector<BaseAreaPaths> trunk_base_areas(const char *style, const char *pattern)
+{
+    Slic3r::Print print;
+    slice_with_tree_support(trunk_mesh(), print, style, 30, 1, 0, {
+        { "support_base_pattern",    pattern },
+        { "tree_support_wall_count", 0 },
+    });
+    return base_areas(print);
+}
+
+} // namespace
+
+// With Support wall loops at 0 (auto), a support area that gets infill keeps a wall around it.
+// Without one, the infill lines of each layer stand on those below as separate plates with nothing
+// tying them together, and a tall support folds over.
+TEST_CASE("Tree support infill keeps a wall around it when the wall count is auto", "[TreeSupport]")
+{
+    const char *style   = GENERATE("tree_slim", "tree_strong", "tree_hybrid", "tree_organic");
+    const char *pattern = GENERATE("rectilinear", "default");
+    CAPTURE(style, pattern);
+
+    size_t infilled = 0;
+    for (const BaseAreaPaths &paths : trunk_base_areas(style, pattern))
+        if (! paths.infill.empty()) {
+            ++ infilled;
+            CHECK(walled(paths));
+        }
+    // Default fills a trunk too thick to stand as a hollow shell, as Rectilinear does.
     REQUIRE(infilled > 0);
+}
+
+TEST_CASE("Tree support branches stay hollow with the Default base pattern, and trunks too with Hollow", "[TreeSupport]")
+{
+    const char *style = GENERATE("tree_slim", "tree_strong", "tree_hybrid", "tree_organic");
+    CAPTURE(style);
+    const std::vector<BaseAreaPaths> by_default = trunk_base_areas(style, "default");
+    const std::vector<BaseAreaPaths> hollow     = trunk_base_areas(style, "hollow");
+    CHECK(count_areas(by_default, false) > 0);
+    CHECK(count_areas(hollow, false) > 0);
+    CHECK(count_areas(hollow, true) < count_areas(by_default, true));
 }
