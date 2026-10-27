@@ -639,9 +639,10 @@ static Polylines draw_perimeters(const ExPolygon &expoly, double clip_length)
     return polylines;
 }
 
-bool is_thick_support_area(const ExPolygon &area, coordf_t support_spacing)
+bool is_thick_support_area(const ExPolygon &area, coordf_t branch_diameter, coordf_t line_spacing, coordf_t support_spacing)
 {
-    return ! offset(area, - float(scale_(support_spacing * 1.5))).empty();
+    const coordf_t trunk_width = std::max(1.5 * branch_diameter, 2. * line_spacing + support_spacing);
+    return ! offset(area, - float(scale_(0.5 * trunk_width))).empty();
 }
 
 void tree_supports_generate_paths(
@@ -1959,12 +1960,14 @@ void generate_support_toolpaths(
                     no_sort = true;
                 } else if (support_params.support_style == SupportMaterialStyle::smsTreeOrganic &&
                            (config.support_base_pattern == smpNone || config.support_base_pattern == smpDefault)) {
-                    // Orca: Default leaves branches hollow, but fills any trunk too thick to stand as a hollow shell.
-                    // Hollow leaves them all hollow.
+                    // Orca: Default leaves branches hollow, but fills the trunks, where branches merge. Hollow leaves
+                    // them all hollow.
                     ExPolygons thick, hollow;
                     if (config.support_base_pattern == smpDefault)
                         for (ExPolygon &area : union_ex(base_layer.polygons_to_extrude()))
-                            (is_thick_support_area(area, support_params.support_spacing) ? thick : hollow).emplace_back(std::move(area));
+                            (is_thick_support_area(area, config.tree_support_branch_diameter_organic.value,
+                                                   support_params.support_material_flow.spacing(), support_params.support_spacing) ?
+                                 thick : hollow).emplace_back(std::move(area));
                     if (thick.empty()) {
                         tree_supports_generate_paths(base_layer.extrusions, base_layer.polygons_to_extrude(), flow, support_params);
                     } else {
