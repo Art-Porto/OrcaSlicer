@@ -639,6 +639,11 @@ static Polylines draw_perimeters(const ExPolygon &expoly, double clip_length)
     return polylines;
 }
 
+bool is_thick_support_area(const ExPolygon &area, coordf_t support_spacing)
+{
+    return ! offset(area, - float(scale_(support_spacing * 1.5))).empty();
+}
+
 void tree_supports_generate_paths(
     ExtrusionEntitiesPtr    &dst,
     const Polygons          &polygons,
@@ -1954,7 +1959,19 @@ void generate_support_toolpaths(
                     no_sort = true;
                 } else if (support_params.support_style == SupportMaterialStyle::smsTreeOrganic &&
                            (config.support_base_pattern == smpNone || config.support_base_pattern == smpDefault)) {
-                    tree_supports_generate_paths(base_layer.extrusions, base_layer.polygons_to_extrude(), flow, support_params);
+                    // Orca: Default leaves branches hollow, but fills any trunk too thick to stand as a hollow shell.
+                    // Hollow leaves them all hollow.
+                    ExPolygons thick, hollow;
+                    if (config.support_base_pattern == smpDefault)
+                        for (ExPolygon &area : union_ex(base_layer.polygons_to_extrude()))
+                            (is_thick_support_area(area, support_params.support_spacing) ? thick : hollow).emplace_back(std::move(area));
+                    if (thick.empty()) {
+                        tree_supports_generate_paths(base_layer.extrusions, base_layer.polygons_to_extrude(), flow, support_params);
+                    } else {
+                        fill_expolygons_with_sheath_generate_paths(base_layer.extrusions, to_polygons(thick), filler, density,
+                                                                   ExtrusionRole::erSupportMaterial, flow, support_params, true, no_sort);
+                        tree_supports_generate_paths(base_layer.extrusions, to_polygons(hollow), flow, support_params);
+                    }
                     done = true;
                 }
                 if (! done)
