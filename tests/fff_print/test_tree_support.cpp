@@ -208,21 +208,13 @@ struct BaseAreaPaths
     Points infill;
 };
 
-// A wall is a loop, or a loop opened at its seam: the walls of hollow branches are printed as paths
-// clipped a little short of where they started.
-bool is_wall(const ExtrusionEntity &entity)
-{
-    return entity.is_loop() || ((entity.first_point() - entity.last_point()).cast<double>().norm() < scale_(1.) &&
-                                entity.length() > scale_(3.));
-}
-
 void collect_base_area_paths(const ExtrusionEntity &entity, BaseAreaPaths &out)
 {
     if (entity.is_collection()) {
         for (const ExtrusionEntity *child : static_cast<const ExtrusionEntityCollection &>(entity).entities)
             collect_base_area_paths(*child, out);
     } else if (entity.role() == erSupportMaterial) {
-        entity.collect_points(is_wall(entity) ? out.walls : out.infill);
+        entity.collect_points(entity.is_loop() ? out.walls : out.infill);
     }
 }
 
