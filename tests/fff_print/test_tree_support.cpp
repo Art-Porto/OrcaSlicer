@@ -201,61 +201,61 @@ TEST_CASE("Tree support toolpaths do not depend on the MST tie order", "[TreeSup
 
 namespace {
 
-// The points of the walls and of the infill of one support area.
+// What is printed in one support base area.
 struct BaseAreaPaths
 {
-    Points walls;
-    Points infill;
+    // Paths cross the inside of the area, away from its walls.
+    bool infilled = false;
+    // Paths run along most of the outline of the area.
+    bool walled = false;
 };
 
-// A wall is a loop, or a loop opened at its seam: the walls of hollow branches are printed as paths
-// clipped a little short of where they started.
-bool is_wall(const ExtrusionEntity &entity)
-{
-    return entity.is_loop() || ((entity.first_point() - entity.last_point()).cast<double>().norm() < scale_(1.) &&
-                                entity.length() > scale_(3.));
-}
-
-void collect_base_area_paths(const ExtrusionEntity &entity, BaseAreaPaths &out)
+void collect_base_polylines(const ExtrusionEntity &entity, Polylines &out, bool &other_roles)
 {
     if (entity.is_collection()) {
         for (const ExtrusionEntity *child : static_cast<const ExtrusionEntityCollection &>(entity).entities)
-            collect_base_area_paths(*child, out);
+            collect_base_polylines(*child, out, other_roles);
     } else if (entity.role() == erSupportMaterial) {
-        entity.collect_points(is_wall(entity) ? out.walls : out.infill);
+        entity.collect_polylines(out);
+    } else {
+        other_roles = true;
     }
 }
 
-// The base areas of every support layer but the first, which is a flange with a sheath of its own.
+// The base areas of the support layers but the first, which is a flange with a sheath of its own. The
+// paths are measured against the areas rather than told apart by kind, since the walls of hollow
+// branches are printed as paths clipped at their seam, just like infill.
 std::vector<BaseAreaPaths> base_areas(const Slic3r::Print &print)
 {
+    const float                width = float(scale_(0.4));
     std::vector<BaseAreaPaths> out;
-    const auto &layers = print.objects().front()->support_layers();
-    for (size_t layer_idx = 1; layer_idx < layers.size(); ++ layer_idx)
-        for (const ExtrusionEntity *area : layers[layer_idx]->support_fills.entities) {
-            BaseAreaPaths paths;
-            collect_base_area_paths(*area, paths);
-            if (! paths.walls.empty() || ! paths.infill.empty())
-                out.emplace_back(std::move(paths));
+    const auto                &layers = print.objects().front()->support_layers();
+    for (size_t layer_idx = 1; layer_idx < layers.size(); ++ layer_idx) {
+        const SupportLayer &layer = *layers[layer_idx];
+        Polylines           paths;
+        bool                other_roles = false;
+        collect_base_polylines(layer.support_fills, paths, other_roles);
+        // Organic supports keep only the islands, which take in the interfaces of the layers that have any.
+        if (paths.empty() || (layer.base_areas.empty() && other_roles))
+            continue;
+        for (const ExPolygon &area : layer.base_areas.empty() ? layer.support_islands : layer.base_areas) {
+            const double outline = unscaled(area.contour.length());
+            if (outline < 3.)
+                continue;
+            BaseAreaPaths paths_in_area;
+            paths_in_area.infilled = total_length(intersection_pl(paths, offset_ex(area, -3.f * width))) > scale_(2.);
+            const ExPolygons band  = diff_ex(ExPolygons{ area }, offset_ex(area, -width));
+            paths_in_area.walled   = unscaled(total_length(intersection_pl(paths, band))) > 0.75 * outline;
+            out.emplace_back(paths_in_area);
         }
+    }
     return out;
 }
 
-// Infill that a wall goes around. Infill only areas still get short walls where the infill does not
-// reach, so the check is that a wall goes around the infill, not that there is one.
-bool walled(const BaseAreaPaths &paths)
+size_t count_areas(const std::vector<BaseAreaPaths> &areas, bool infilled)
 {
-    if (paths.walls.empty())
-        return false;
-    const BoundingBox walls(paths.walls);
-    const BoundingBox infill(paths.infill);
-    return walls.contains(infill.min) && walls.contains(infill.max);
-}
-
-size_t count_areas(const std::vector<BaseAreaPaths> &areas, bool with_infill)
-{
-    return std::count_if(areas.begin(), areas.end(), [with_infill](const BaseAreaPaths &paths) {
-        return ! paths.walls.empty() && paths.infill.empty() != with_infill;
+    return std::count_if(areas.begin(), areas.end(), [infilled](const BaseAreaPaths &paths) {
+        return paths.walled && paths.infilled == infilled;
     });
 }
 
@@ -294,9 +294,9 @@ TEST_CASE("Tree support infill keeps a wall around it when the wall count is aut
 
     size_t infilled = 0;
     for (const BaseAreaPaths &paths : trunk_base_areas(style, pattern))
-        if (! paths.infill.empty()) {
+        if (paths.infilled) {
             ++ infilled;
-            CHECK(walled(paths));
+            CHECK(paths.walled);
         }
     // Default fills a trunk too thick to stand as a hollow shell, as Rectilinear does.
     REQUIRE(infilled > 0);
