@@ -134,8 +134,9 @@ inline bool equal_layering(const SlicingParameters &sp1, const SlicingParameters
             sp1.interface_raft_layer_height         == sp2.interface_raft_layer_height          &&
             sp1.contact_raft_layer_height           == sp2.contact_raft_layer_height            &&
             sp1.layer_height                        == sp2.layer_height                         &&
-            sp1.min_layer_height                    == sp2.min_layer_height                     &&
-            sp1.max_layer_height                    == sp2.max_layer_height                     &&
+            // Orca: the layer height limits of each object's extruders only bound a variable layer height,
+            // and the layers it gives are compared on their own. With a fixed layer height the limits
+            // leave the layers alone, so objects whose extruders allow different ranges still share them.
 //            sp1.max_suport_layer_height             == sp2.max_suport_layer_height              &&
             sp1.first_print_layer_height            == sp2.first_print_layer_height             &&
             sp1.first_object_layer_height           == sp2.first_object_layer_height            &&
