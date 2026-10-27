@@ -1806,9 +1806,11 @@ void TreeSupport::generate_toolpaths()
                         else {
                             //ORCA: Force base walls before infill to keep outline->fill order.
                             if (need_infill && m_support_params.base_fill_pattern != ipLightning) {
-                                // Orca: at least one wall, also when the wall count is 0 (auto). Infill alone stacks
-                                // into separate plates with nothing tying them together, and a tall support folds over.
-                                make_perimeter_and_infill(base_dst, poly, std::max(size_t(1), wall_count), flow,
+                                // allow infill-only mode if support is thick enough (so min_wall_count is 0);
+                                // otherwise must draw 1 wall
+                                // Don't need extra walls if we have infill. Extra walls may overlap with the infills.
+                                size_t min_wall_count = offset(poly, -scale_(support_spacing * 1.5)).empty() ? 1 : 0;
+                                make_perimeter_and_infill(base_dst, poly, std::max(min_wall_count, wall_count), flow,
                                     erSupportMaterial, filler_support.get(), support_density, false);
                             }
                             else {
