@@ -1779,9 +1779,10 @@ void TreeSupport::generate_toolpaths()
                         Flow flow = support_base_on_bed ? m_support_params.first_layer_flow : support_flow;
                         bool need_infill = with_infill;
                         if (m_object_config->support_base_pattern == smpDefault)
-                            // Orca: Default leaves branches hollow, but fills the normal support of Tree Hybrid and any
-                            // trunk too thick to stand as a hollow shell. Hollow leaves them all hollow.
-                            need_infill = (with_infill && area_group.need_infill) || is_thick_support_area(poly, support_spacing);
+                            // Orca: Default leaves branches hollow, but fills the normal support of Tree Hybrid and the
+                            // trunks, where branches merge. Hollow leaves them all hollow.
+                            need_infill = (with_infill && area_group.need_infill) ||
+                                          is_thick_support_area(poly, object_config.tree_support_branch_diameter.value, support_flow.spacing(), support_spacing);
                         // Orca: Use rectilinear for support base on the bed
                         const InfillPattern base_fill_pattern = support_base_on_bed ? ipRectilinear : m_support_params.base_fill_pattern;
                         std::shared_ptr<Fill> filler_support = std::shared_ptr<Fill>(Fill::new_from_type(base_fill_pattern));

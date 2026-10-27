@@ -7544,7 +7544,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Base pattern");
     def->category = L("Support");
     def->tooltip = L("Line pattern of support.\n\n"
-                     "The Default option for Tree supports leaves the branches hollow, and fills the trunks too thick to stand as a hollow shell. "
+                     "The Default option for Tree supports leaves the branches hollow, and fills the trunks, where branches merge. "
                      "Hollow leaves them all hollow. "
                      "For other support types, the Default option is the Rectilinear pattern.\n\n"
                      "NOTE: For Organic supports, the two walls are supported only with the Hollow/Default base pattern. "

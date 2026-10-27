@@ -277,13 +277,9 @@ TriangleMesh trunk_mesh()
 std::vector<BaseAreaPaths> trunk_base_areas(const char *style, const char *pattern)
 {
     Slic3r::Print print;
-    // Organic branches stay thinner than the others under this plate, so a closer base pattern brings the
-    // width at which a trunk is filled, 3 x (spacing + line width), within reach of its trunks.
-    const bool organic = std::string(style) == "organic";
     slice_with_tree_support(trunk_mesh(), print, style, 30, 1, 0, {
-        { "support_base_pattern",         pattern },
-        { "support_base_pattern_spacing", organic ? 1. : 2.5 },
-        { "tree_support_wall_count",      0 },
+        { "support_base_pattern",    pattern },
+        { "tree_support_wall_count", 0 },
     });
     return base_areas(print);
 }
@@ -305,7 +301,7 @@ TEST_CASE("Tree support infill keeps a wall around it when the wall count is aut
             ++ infilled;
             CHECK(paths.walled);
         }
-    // Default fills a trunk too thick to stand as a hollow shell, as Rectilinear does.
+    // Default fills the trunks, where branches merge, as Rectilinear does.
     REQUIRE(infilled > 0);
 }
 
