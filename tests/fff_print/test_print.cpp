@@ -2185,7 +2185,9 @@ TEST_CASE("Objects that do not share their layers are refused once their support
 {
     Model model;
     slice_lower_half_finer(*add_object(model, cube(20), 20., 20.));
-    add_object(model, mesh(TestMesh::overhang, Vec3d::Zero(), 2.), 60., 20.);
+    TriangleMesh overhang = mesh(TestMesh::overhang);
+    overhang.scale(2.f);
+    add_object(model, std::move(overhang), 60., 20.);
     Print print;
     print.apply(model, prime_tower_config(support_interface_on_filament_2));
 
