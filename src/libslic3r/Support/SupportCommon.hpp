@@ -53,11 +53,6 @@ SupportGeneratorLayersPtr generate_raft_base(
 
 void tree_supports_generate_paths(ExtrusionEntitiesPtr &dst, const Polygons &polygons, const Flow &flow, const SupportParameters &support_params);
 
-// Orca: whether a tree support area is a trunk, where branches merge, rather than a single branch, so that
-// the Default base pattern fills it while the branches stay hollow. That is an area wider than one and a
-// half branches, and at least wide enough to fit a line of the base pattern inside a wall.
-bool is_thick_support_area(const ExPolygon &area, coordf_t branch_diameter, coordf_t line_spacing, coordf_t support_spacing);
-
 void fill_expolygons_with_sheath_generate_paths(
     ExtrusionEntitiesPtr &dst, const Polygons &polygons, Fill *filler, float density, ExtrusionRole role, const Flow &flow, const SupportParameters& support_params, bool with_sheath, bool no_sort);
 
