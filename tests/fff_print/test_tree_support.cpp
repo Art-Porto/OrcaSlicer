@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <initializer_list>
+#include <string>
 #include "libslic3r/Config.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/Point.hpp"
@@ -290,7 +291,7 @@ std::vector<BaseAreaPaths> trunk_base_areas(const char *style, const char *patte
 // tying them together, and a tall support folds over.
 TEST_CASE("Tree support infill keeps a wall around it when the wall count is auto", "[TreeSupport]")
 {
-    const char *style   = GENERATE("tree_slim", "tree_strong", "tree_hybrid", "tree_organic");
+    const char *style   = GENERATE("tree_slim", "tree_strong", "tree_hybrid", "organic");
     const char *pattern = GENERATE("rectilinear", "default");
     CAPTURE(style, pattern);
 
@@ -306,11 +307,13 @@ TEST_CASE("Tree support infill keeps a wall around it when the wall count is aut
 
 TEST_CASE("Tree support branches stay hollow with the Default base pattern, and trunks too with Hollow", "[TreeSupport]")
 {
-    const char *style = GENERATE("tree_slim", "tree_strong", "tree_hybrid", "tree_organic");
+    const char *style = GENERATE("tree_slim", "tree_strong", "tree_hybrid", "organic");
     CAPTURE(style);
     const std::vector<BaseAreaPaths> by_default = trunk_base_areas(style, "default");
     const std::vector<BaseAreaPaths> hollow     = trunk_base_areas(style, "hollow");
-    CHECK(count_areas(by_default, false) > 0);
+    // Tree Hybrid prints the support under this flat plate as normal support, which Default fills too.
+    if (std::string(style) != "tree_hybrid")
+        CHECK(count_areas(by_default, false) > 0);
     CHECK(count_areas(hollow, false) > 0);
     CHECK(count_areas(hollow, true) < count_areas(by_default, true));
 }
