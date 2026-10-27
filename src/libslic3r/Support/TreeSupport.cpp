@@ -1778,8 +1778,11 @@ void TreeSupport::generate_toolpaths()
                         bool support_base_on_bed = (layer_id == 0 && m_raft_layers == 0 && !belt_floor_active);
                         Flow flow = support_base_on_bed ? m_support_params.first_layer_flow : support_flow;
                         bool need_infill = with_infill;
-                        if(m_object_config->support_base_pattern==smpDefault)
-                            need_infill &= area_group.need_infill;
+                        if (m_object_config->support_base_pattern == smpDefault)
+                            // Orca: Default leaves branches hollow, but fills the normal support of Tree Hybrid and the
+                            // trunks, where branches merge. Hollow leaves them all hollow.
+                            need_infill = (with_infill && area_group.need_infill) ||
+                                          is_thick_support_area(poly, object_config.tree_support_branch_diameter.value, support_flow.spacing(), support_spacing);
                         // Orca: Use rectilinear for support base on the bed
                         const InfillPattern base_fill_pattern = support_base_on_bed ? ipRectilinear : m_support_params.base_fill_pattern;
                         std::shared_ptr<Fill> filler_support = std::shared_ptr<Fill>(Fill::new_from_type(base_fill_pattern));
@@ -1804,11 +1807,9 @@ void TreeSupport::generate_toolpaths()
                         else {
                             //ORCA: Force base walls before infill to keep outline->fill order.
                             if (need_infill && m_support_params.base_fill_pattern != ipLightning) {
-                                // allow infill-only mode if support is thick enough (so min_wall_count is 0);
-                                // otherwise must draw 1 wall
-                                // Don't need extra walls if we have infill. Extra walls may overlap with the infills.
-                                size_t min_wall_count = offset(poly, -scale_(support_spacing * 1.5)).empty() ? 1 : 0;
-                                make_perimeter_and_infill(base_dst, poly, std::max(min_wall_count, wall_count), flow,
+                                // Orca: at least one wall, also when the wall count is 0 (auto). Infill alone stacks
+                                // into separate plates with nothing tying them together, and a tall support folds over.
+                                make_perimeter_and_infill(base_dst, poly, std::max(size_t(1), wall_count), flow,
                                     erSupportMaterial, filler_support.get(), support_density, false);
                             }
                             else {
