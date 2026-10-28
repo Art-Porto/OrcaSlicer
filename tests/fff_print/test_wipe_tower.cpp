@@ -319,6 +319,36 @@ TEST_CASE("The tower is sized for the thinnest layer any object on the plate is 
     CHECK_THAT(print.wipe_tower_data(2).depth, Catch::Matchers::WithinAbs(20., 1e-4));
 }
 
+TEST_CASE("A variable layer height thinner than the preset deepens the estimate as much as the tower", "[WipeTower]")
+{
+    // A 20 mm cube under a 0.2 mm preset, printed at 0.1 mm above its first layer by its variable layer
+    // height profile. Each layer purges the same volume, so the generated tower is about twice as deep
+    // as at the preset's height: 100 / (0.2 * 50) = 10 mm there.
+    DynamicPrintConfig config = tower_estimate_config("rectangle");
+    config.set_deserialize_strict({ { "initial_layer_print_height", "0.2" },
+                                    { "min_layer_height",           "0.07" },
+                                    { "wipe_tower_x",               "120" },
+                                    { "wipe_tower_y",               "120" } });
+    TriangleMesh mesh = cube(20);
+    mesh.translate(30.f, 30.f, 0.f);
+
+    Print print;
+    Model model;
+    init_print({ std::move(mesh) }, print, model, config, nullptr, false);
+    // (z, layer height) pairs: the 0.2 mm first layer, then 0.1 mm up to the top.
+    model.objects.front()->layer_height_profile.set({ 0., 0.2, 0.2, 0.1, 20., 0.1 });
+    print.apply(model, config);
+
+    const float estimate = print.wipe_tower_data(2).depth;
+    print.process();
+    REQUIRE(print.is_step_done(psWipeTower));
+    const float generated = print.wipe_tower_data().depth;
+    INFO("estimated depth " << estimate << ", generated depth " << generated);
+    CHECK(generated > 15.f);
+    // The estimate leaves out the line shape and the perimeter, so it is close to the tower, not equal.
+    CHECK_THAT(estimate, Catch::Matchers::WithinRel(generated, 0.2f));
+}
+
 TEST_CASE("Validation is given the tower's effective width, not the configured one", "[WipeTower]")
 {
     // A rib wall squares the tower, so its width is its depth. Validation reads this rather

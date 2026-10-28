@@ -4025,6 +4025,11 @@ WipeTowerFootprint PartPlate::estimate_wipe_tower_footprint(const DynamicPrintCo
         }
         const ConfigOption *object_layer_height = object->config.option("layer_height");
         layer_height = std::min(layer_height, object_layer_height != nullptr ? object_layer_height->getFloat() : global_layer_height);
+        // A variable layer height or a layer range can slice it thinner. Only those objects pay for the
+        // slicing parameters, as this runs on every scene reload.
+        if (!object->layer_height_profile.empty() || !object->layer_config_ranges.empty())
+            layer_height = std::min(layer_height, double(PrintObject::min_layer_height(
+                *object, PrintObject::slicing_parameters(config, *object, float(object->max_z()), Vec3d::Ones()))));
     }
     if (layer_height == std::numeric_limits<double>::max())
         layer_height = global_layer_height;

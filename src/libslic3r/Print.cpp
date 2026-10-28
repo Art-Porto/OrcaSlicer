@@ -5247,7 +5247,7 @@ const WipeTowerData &Print::wipe_tower_data(size_t filaments_cnt) const
     double layer_height = std::numeric_limits<double>::max();
     for (const PrintObject *object : m_objects) {
         max_height   = std::max(max_height, unscale_(double(object->size().z())));
-        layer_height = std::min(layer_height, object->config().layer_height.value);
+        layer_height = std::min(layer_height, double(PrintObject::min_layer_height(*object->model_object(), object->slicing_parameters())));
     }
     if (max_height < EPSILON)
         return m_wipe_tower_data;

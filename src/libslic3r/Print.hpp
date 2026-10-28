@@ -488,6 +488,9 @@ public:
     // Initialize the layer_height_profile from the model_object's layer_height_profile, from model_object's layer height table, or from slicing parameters.
     // Returns true, if the layer_height_profile was changed.
     static bool     update_layer_height_profile(const ModelObject &model_object, const SlicingParameters &slicing_parameters, std::vector<coordf_t> &layer_height_profile);
+    // Thinnest layer the object is sliced at: the smallest height of its layer height profile, which holds its
+    // variable layer height and the heights of its layer ranges. The prime tower is sized for it before slicing.
+    static coordf_t min_layer_height(const ModelObject &model_object, const SlicingParameters &slicing_parameters);
 
     // Collect the slicing parameters, to be used by variable layer thickness algorithm,
     // by the interactive layer height editor and by the printing process itself.
