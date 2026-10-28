@@ -573,3 +573,94 @@ TEST_CASE("Only a cone wall gives the tower a stabilization cone", "[WipeTower]"
         CHECK_FALSE(print.get_conflict_result().has_value());
     }
 }
+
+// "No sparse layers" by layer on the 200 mm bed, with the tower in a corner and a toolhead that clears
+// 20 mm above the tower, far from it, and needs 40 mm around it.
+static DynamicPrintConfig compacted_tower_config(const char *wipe_tower_type)
+{
+    return multifilament_config(2, {
+        { "enable_prime_tower",               1 },
+        { "wipe_tower_type",                  wipe_tower_type },
+        { "wipe_tower_no_sparse_layers",      1 },
+        { "printable_area",                   "0x0,200x0,200x200,0x200" },
+        { "wipe_tower_x",                     160 },
+        { "wipe_tower_y",                     160 },
+        { "prime_tower_width",                20 },
+        { "layer_height",                     0.2 },
+        { "initial_layer_print_height",       0.2 },
+        { "extruder_clearance_height_to_lid", 20 },
+        { "extruder_clearance_height_to_rod", 20 },
+        { "extruder_clearance_radius",        40 },
+        { "skirt_loops",                      0 },
+        { "brim_type",                        "no_brim" },
+        { "layer_change_gcode",               "G92 E0\n" }, // validate() relative-E reset
+    });
+}
+
+// A 20 x 20 x 40 mm part printed with filament 1, and with filament 2 from 30 to 35 mm, so that the
+// only toolchanges are at 30 and 35 mm, far above the 20 mm the toolhead clears.
+static void add_part_changing_filament_near_its_top(Model &model, double x, double y)
+{
+    ModelObject *object = model.add_object();
+    object->add_volume(make_cube(20., 20., 40.));
+    object->add_instance()->set_offset(Vec3d(x, y, 0.));
+    object->ensure_on_bed();
+    DynamicPrintConfig range;
+    range.set_key_value("extruder", new ConfigOptionInt(2));
+    range.set_key_value("layer_height", new ConfigOptionFloat(0.2)); // every range carries one
+    object->layer_config_ranges[{ 30., 35. }].assign_config(std::move(range));
+}
+
+TEST_CASE("No sparse layers climbs the tower with a part that rises past the clearance", "[WipeTower]")
+{
+    const char *wipe_tower_type = GENERATE("type1", "type2");
+    INFO("wipe tower " << wipe_tower_type);
+    const double clearance = 20.;
+
+    Model model;
+    add_part_changing_filament_near_its_top(model, 20., 20.);
+    Print print;
+    print.apply(model, compacted_tower_config(wipe_tower_type));
+
+    // Far from the tower, the part was refused before slicing, and once sliced too: a tower that grows
+    // only on toolchanges is a layer tall at 30 mm.
+    CHECK(print.validate().string.empty());
+    REQUIRE_NOTHROW(print.process());
+
+    const std::vector<std::vector<WipeTower::ToolChangeResult>> &tool_changes = print.wipe_tower_data().tool_changes;
+    const std::vector<float> tower_z = compute_compacted_wipe_tower_z(tool_changes);
+    size_t last_printed = 0;
+    for (size_t i = 0; i < tool_changes.size(); ++i)
+        if (! tool_changes[i].empty() && ! wipe_tower_layer_is_sparse(tool_changes[i]))
+            last_printed = i;
+    REQUIRE(last_printed > 0);
+
+    // Up to the last layer the nozzle comes down to it, the tower never falls more than the clearance
+    // below the layer being printed...
+    for (size_t i = 0; i <= last_printed; ++i) {
+        if (tool_changes[i].empty())
+            continue;
+        const double print_z = tool_changes[i].front().print_z;
+        INFO("print_z " << print_z << ", tower top " << tower_z[i]);
+        CHECK(print_z - tower_z[i] <= clearance + EPSILON);
+    }
+    // ...and it climbs no higher than that needs, stopping at the last toolchange.
+    const double last_z = tool_changes[last_printed].front().print_z;
+    INFO("last toolchange at " << last_z << ", tower top " << tower_z[last_printed]);
+    CHECK(last_z == Catch::Approx(35.).margin(0.25));
+    CHECK(last_z - tower_z[last_printed] > clearance - 0.5);
+}
+
+TEST_CASE("No sparse layers still refuses a tall part within the toolhead's reach of the tower", "[WipeTower]")
+{
+    const char *wipe_tower_type = GENERATE("type1", "type2");
+    INFO("wipe tower " << wipe_tower_type);
+
+    // 10 to 20 mm left of the tower, well inside the 40 mm the toolhead needs around it.
+    Model model;
+    add_part_changing_filament_near_its_top(model, 130., 165.);
+    Print print;
+    print.apply(model, compacted_tower_config(wipe_tower_type));
+
+    CHECK_THAT(print.validate().string, Catch::Matchers::ContainsSubstring("No sparse layers"));
+}
