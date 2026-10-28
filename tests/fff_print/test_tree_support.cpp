@@ -304,19 +304,19 @@ TEST_CASE("Tree support infill keeps a wall around it when the wall count is aut
             ++ infilled;
             CHECK(paths.walled);
         }
-    // Default fills the trunks, where branches merge, as Rectilinear does.
-    REQUIRE(infilled > 0);
+    // Default leaves tree branches and trunks hollow; only the normal support of Tree Hybrid gets infill with it.
+    if (std::string(pattern) == "rectilinear" || std::string(style) == "tree_hybrid")
+        REQUIRE(infilled > 0);
 }
 
-TEST_CASE("Tree support branches stay hollow with the Default base pattern, and trunks too with Hollow", "[TreeSupport]")
+// Default and Hollow print no infill in tree branches or trunks, so saved projects slice as before.
+TEST_CASE("Tree support stays hollow with the Default and Hollow base patterns", "[TreeSupport]")
 {
-    const char *style = GENERATE("tree_slim", "tree_strong", "tree_hybrid", "organic");
-    CAPTURE(style);
-    const std::vector<BaseAreaPaths> by_default = trunk_base_areas(style, "default");
-    const std::vector<BaseAreaPaths> hollow     = trunk_base_areas(style, "hollow");
-    // Tree Hybrid prints the support under this flat plate as normal support, which Default fills too.
-    if (std::string(style) != "tree_hybrid")
-        CHECK(count_areas(by_default, false) > 0);
-    CHECK(count_areas(hollow, false) > 0);
-    CHECK(count_areas(hollow, true) < count_areas(by_default, true));
+    const char *style   = GENERATE("tree_slim", "tree_strong", "organic");
+    const char *pattern = GENERATE("default", "hollow");
+    CAPTURE(style, pattern);
+
+    const std::vector<BaseAreaPaths> areas = trunk_base_areas(style, pattern);
+    CHECK(count_areas(areas, false) > 0);
+    CHECK(std::none_of(areas.begin(), areas.end(), [](const BaseAreaPaths &paths) { return paths.infilled; }));
 }
