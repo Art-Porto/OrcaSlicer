@@ -349,6 +349,73 @@ TEST_CASE("A variable layer height thinner than the preset deepens the estimate 
     CHECK_THAT(estimate, Catch::Matchers::WithinRel(generated, 0.2f));
 }
 
+// A 50 mm tall object gives the tower an auto brim of 4 mm, which is only sized when the tower is
+// generated: before slicing, validation checks the body alone against the bed.
+static DynamicPrintConfig auto_brim_tower_config()
+{
+    DynamicPrintConfig config = tower_estimate_config("rectangle");
+    // The G92 E0 lets validate() accept the relative E of the test printer.
+    config.set_deserialize_strict({ { "prime_tower_brim_width", "-1" }, { "layer_change_gcode", "G92 E0\n" } });
+    return config;
+}
+
+static TriangleMesh auto_brim_tower_object()
+{
+    TriangleMesh mesh = make_cube(20., 20., 50.);
+    mesh.translate(30.f, 30.f, 0.f);
+    return mesh;
+}
+
+TEST_CASE("A tower that does not fit where it was placed is moved to the nearest place where it fits", "[WipeTower]")
+{
+    DynamicPrintConfig config = auto_brim_tower_config();
+    Print print;
+    Model model;
+    init_print({ auto_brim_tower_object() }, print, model, config, nullptr, false);
+    print.apply(model, config);
+    REQUIRE(print.wipe_tower_data(2).brim_width > 2.f);
+
+    // The body 1 mm inside the back edge of the 200 mm bed, so its brim reaches past it.
+    const double x = 100.;
+    const double y = 200. - print.wipe_tower_data(2).depth - 1.;
+    config.set_deserialize_strict({ { "wipe_tower_x", std::to_string(x) }, { "wipe_tower_y", std::to_string(y) } });
+    print.apply(model, config);
+    REQUIRE(print.validate().string == "");
+
+    const std::string gcode_out = gcode(print);
+    CHECK_FALSE(gcode_out.empty());
+    REQUIRE(print.wipe_tower_data().wipe_tower_mesh_data.has_value());
+
+    // Straight towards the bed, which is the nearest place, and the whole generated footprint on it.
+    const double moved_y = print.config().wipe_tower_y.get_at(0);
+    CHECK(moved_y < y);
+    CHECK_THAT(print.config().wipe_tower_x.get_at(0), Catch::Matchers::WithinAbs(x, 1e-3));
+    Polygon footprint = print.wipe_tower_data().wipe_tower_mesh_data->bottom;
+    footprint.translate(Point(scale_(x), scale_(moved_y)));
+    CHECK(unscaled(get_extents(footprint).max.y()) <= 200.);
+    CHECK(print.validate().string == "");
+
+    // The plate still asking for the old place keeps the slice, so it is not redone over and over.
+    print.apply(model, config);
+    CHECK(print.is_step_done(psSkirtBrim));
+    CHECK_THAT(print.config().wipe_tower_y.get_at(0), Catch::Matchers::WithinAbs(moved_y, 1e-9));
+}
+
+TEST_CASE("A tower that fits nowhere on the plate is still refused", "[WipeTower]")
+{
+    // A 55 mm wide bed cannot hold the 50 mm wide tower with a 4 mm brim on each side.
+    DynamicPrintConfig config = auto_brim_tower_config();
+    config.set_deserialize_strict({ { "printable_area", "0x0,55x0,55x200,0x200" },
+                                    { "wipe_tower_x",   "2" },
+                                    { "wipe_tower_y",   "100" } });
+    Print print;
+    Model model;
+    init_print({ auto_brim_tower_object() }, print, model, config, nullptr, false);
+    print.apply(model, config);
+    REQUIRE(print.has_wipe_tower());
+    CHECK_THROWS_WITH(print.process(), Catch::Matchers::ContainsSubstring("printable area"));
+}
+
 TEST_CASE("Validation is given the tower's effective width, not the configured one", "[WipeTower]")
 {
     // A rib wall squares the tower, so its width is its depth. Validation reads this rather

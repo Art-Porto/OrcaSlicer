@@ -5266,7 +5266,7 @@ bool Print::enable_timelapse_print() const
 }
 
 
-void Print::_make_wipe_tower()
+void Print::_make_wipe_tower(bool move_to_fit)
 {
     m_wipe_tower_data.clear();
 
@@ -5651,15 +5651,45 @@ void Print::_make_wipe_tower()
     }
 
     // The clamps and checks above work from estimates; re-test the exact generated footprint
-    // so an off-plate tower fails with a clear error instead of exporting unprintable G-code
-    // (validate() only sees the mesh on its next run).
+    // so an off-plate tower is moved or fails with a clear error instead of exporting unprintable
+    // G-code (validate() only sees the mesh on its next run).
     if (m_wipe_tower_data.wipe_tower_mesh_data) {
-        Polygon footprint = m_wipe_tower_data.wipe_tower_mesh_data->bottom; // includes brim and rib offset
-        footprint.rotate(Geometry::deg2rad(m_config.wipe_tower_rotation_angle.value));
-        footprint.translate(Point(scale_(m_config.wipe_tower_x.get_at(m_plate_index)),
-                                  scale_(m_config.wipe_tower_y.get_at(m_plate_index))));
+        Polygon local_footprint = m_wipe_tower_data.wipe_tower_mesh_data->bottom; // includes brim and rib offset
+        local_footprint.rotate(Geometry::deg2rad(m_config.wipe_tower_rotation_angle.value));
+        const Vec2d position(m_config.wipe_tower_x.get_at(m_plate_index), m_config.wipe_tower_y.get_at(m_plate_index));
+        Polygon     footprint = local_footprint;
+        footprint.translate(Point(scale_(position.x()), scale_(position.y())));
         const Polygons printable_polys = this->get_extruder_shared_printable_polygon();
-        if (!printable_polys.empty() && !diff(Polygons{footprint}, printable_polys).empty()) {
+        const bool     outside         = !printable_polys.empty() && !diff(Polygons{footprint}, printable_polys).empty();
+        // The cutter/purge corner is a physical obstacle — the brim must stay out like the body.
+        const bool     excluded        = !intersection(get_bed_excluded_area(m_config), Polygons{footprint}).empty();
+        if (move_to_fit && (outside || excluded)) {
+            // The estimate the plater placed the tower by can fall short of the generated tower. Move it to
+            // the nearest spot where it fits, and generate it again there: the tower plans a few moves by
+            // where it stands. The plater takes the new position through wipe_tower_moved_position().
+            const size_t plate = size_t(m_plate_index);
+            const std::optional<Vec2d> moved = plate < m_config.wipe_tower_x.size() && plate < m_config.wipe_tower_y.size() ?
+                                                   this->nearest_fitting_wipe_tower_position(local_footprint, position) : std::nullopt;
+            if (moved) {
+                m_config.wipe_tower_x.values[plate] = moved->x();
+                m_config.wipe_tower_y.values[plate] = moved->y();
+                // The G-code header lists the full config, which the filament map write-back rebuilds from
+                // the original one.
+                for (DynamicPrintConfig *config : { &m_full_print_config, &m_ori_full_print_config }) {
+                    auto *x = config->option<ConfigOptionFloats>("wipe_tower_x");
+                    auto *y = config->option<ConfigOptionFloats>("wipe_tower_y");
+                    if (x != nullptr && y != nullptr && plate < x->size() && plate < y->size()) {
+                        x->values[plate] = moved->x();
+                        y->values[plate] = moved->y();
+                    }
+                }
+                if (!m_wipe_tower_moved_from)
+                    m_wipe_tower_moved_from = position;
+                this->_make_wipe_tower(false);
+                return;
+            }
+        }
+        if (outside) {
             const BoundingBox fp = get_extents(footprint);
             const BoundingBox pr = get_extents(printable_polys);
             BOOST_LOG_TRIVIAL(error) << boost::format("wipe tower footprint [%1%,%2%]-[%3%,%4%] leaves printable [%5%,%6%]-[%7%,%8%]") %
@@ -5667,10 +5697,53 @@ void Print::_make_wipe_tower()
                 unscaled(pr.min.x()) % unscaled(pr.min.y()) % unscaled(pr.max.x()) % unscaled(pr.max.y());
             throw Slic3r::SlicingError(L("Prime tower is partially outside the printable area, and it cannot be printed.\n"));
         }
-        // The cutter/purge corner is a physical obstacle — the brim must stay out like the body.
-        if (!intersection(get_bed_excluded_area(m_config), Polygons{footprint}).empty())
+        if (excluded)
             throw Slic3r::SlicingError(L("Prime tower is too close to an exclusion area, and collisions will be caused.\n"));
     }
+}
+
+std::optional<Vec2d> Print::nearest_fitting_wipe_tower_position(const Polygon &footprint, const Vec2d &position) const
+{
+    // Plate-local, like the generated footprint: the instances and the exclusion areas are kept clear by
+    // WIPE_TOWER_MARGIN, as the plater does when it moves a tower.
+    const Polygons    printable_polys = this->get_extruder_shared_printable_polygon();
+    const BoundingBox printable       = get_extents(printable_polys);
+    const BoundingBox tower           = get_extents(footprint);
+    const coord_t     margin          = scaled(WIPE_TOWER_MARGIN);
+    const BoundingBox anchors(Point(printable.min - tower.min + Point(margin, margin)), Point(printable.max - tower.max - Point(margin, margin)));
+    if (printable_polys.empty() || anchors.min.x() > anchors.max.x() || anchors.min.y() > anchors.max.y())
+        return std::nullopt;
+
+    Polygons obstacles = offset(get_bed_excluded_area(m_config), float(margin));
+    const Point plate_shift(scale_(m_origin.x()), scale_(m_origin.y()));
+    for (const PrintObject *object : m_objects) {
+        const double brim = object->config().brim_type != btNoBrim ? object->config().brim_width.value : 0.;
+        for (const PrintInstance &instance : object->instances()) {
+            Polygon hull = compacted_tower_print_instance_hull(*object, instance);
+            if (hull.size() < 3)
+                continue;
+            hull.translate(-plate_shift);
+            append(obstacles, offset(hull, float(scale_(brim) + margin)));
+        }
+    }
+
+    const std::optional<Point> anchor = nearest_clear_wipe_tower_anchor(anchors, footprint, obstacles, Point(scale_(position.x()), scale_(position.y())));
+    if (!anchor)
+        return std::nullopt;
+    // The anchors keep the footprint within the printable area's bounding box only, so a bed of another
+    // shape is checked against its outline.
+    Polygon placed = footprint;
+    placed.translate(*anchor);
+    if (!diff(Polygons{ placed }, printable_polys).empty())
+        return std::nullopt;
+    return Vec2d(unscaled(anchor->x()), unscaled(anchor->y()));
+}
+
+std::optional<Vec2d> Print::wipe_tower_moved_position(const Vec2d &position) const
+{
+    if (!m_wipe_tower_moved_from || *m_wipe_tower_moved_from != position)
+        return std::nullopt;
+    return Vec2d(m_config.wipe_tower_x.get_at(m_plate_index), m_config.wipe_tower_y.get_at(m_plate_index));
 }
 
 // Generate a recommended G-code output file name based on the format template, default extension, and template parameters
