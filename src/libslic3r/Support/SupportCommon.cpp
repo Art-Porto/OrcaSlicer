@@ -1,3 +1,5 @@
+#include <cstdlib>
+
 #include "../ClipperUtils.hpp"
 #include "../ExclusionVolumeGeometry.hpp"
 #include "../ClipperZUtils.hpp"
@@ -641,7 +643,10 @@ static Polylines draw_perimeters(const ExPolygon &expoly, double clip_length)
 
 bool is_thick_support_area(const ExPolygon &area, coordf_t branch_diameter, coordf_t line_spacing, coordf_t support_spacing)
 {
-    const coordf_t trunk_width = std::max(1.5 * branch_diameter, 2. * (line_spacing + support_spacing));
+    coordf_t trunk_width = std::max(1.5 * branch_diameter, 2. * (line_spacing + support_spacing));
+    // TEMPORARY, test build only: try other trunk widths by hand, in mm, without a build per value.
+    if (const char *width = std::getenv("ORCA_TREE_TRUNK_WIDTH"))
+        trunk_width = std::atof(width);
     return ! offset(area, - float(scale_(0.5 * trunk_width))).empty();
 }
 
