@@ -2138,7 +2138,8 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer()
     // Skip this in case the layer is sparse and config option to not print sparse layers is enabled.
     // A folded layer prints nothing, so it consumes nothing and adds no height of its own.
     const bool combined_away = m_layer_info != m_plan.end() && m_layer_info->combined_away;
-    if ((! m_sparse_layers_skipped || toolchanges_on_layer || first_layer) && ! combined_away) {
+    const bool climbs        = m_layer_info != m_plan.end() && m_layer_info->climbs;
+    if ((! m_sparse_layers_skipped || toolchanges_on_layer || first_layer || climbs) && ! combined_away) {
         if (m_current_tool < m_used_filament_length.size())
             m_used_filament_length[m_current_tool] += writer.get_and_reset_used_filament_length();
         m_current_height += m_layer_info->height;
@@ -2473,6 +2474,8 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>> 
     // Before planning: the layer heights this rewrites feed the extrusion flow of every later pass.
     if (m_sparse_layers_combined)
         combine_sparse_wipe_tower_plan(m_plan, m_filpar, m_first_layer_idx, m_current_tool);
+    if (m_sparse_layers_skipped)
+        climb_compacted_wipe_tower_plan(m_plan, m_rise_limits, m_compacted_base_z);
 
 	plan_tower();
 #if 1
@@ -2575,6 +2578,9 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>> 
         if (layer.combined_away)
             for (WipeTower::ToolChangeResult &tcr : layer_result)
                 tcr.combined_away = true;
+        if (layer.climbs)
+            for (WipeTower::ToolChangeResult &tcr : layer_result)
+                tcr.climbs = true;
 
 		result.emplace_back(std::move(layer_result));
 

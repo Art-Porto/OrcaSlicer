@@ -58,7 +58,8 @@ bool wipe_tower_sparse_layers_skipped(const PrintConfig &config)
 
 bool wipe_tower_layer_is_sparse(const std::vector<WipeTower::ToolChangeResult> &layer_tool_changes)
 {
-    return layer_tool_changes.size() == 1 && layer_tool_changes.front().initial_tool == layer_tool_changes.front().new_tool;
+    return layer_tool_changes.size() == 1 && layer_tool_changes.front().initial_tool == layer_tool_changes.front().new_tool &&
+           ! layer_tool_changes.front().climbs;
 }
 
 std::vector<float> compute_compacted_wipe_tower_z(const std::vector<std::vector<WipeTower::ToolChangeResult>> &tool_changes,
@@ -72,6 +73,36 @@ std::vector<float> compute_compacted_wipe_tower_z(const std::vector<std::vector<
         tower_z[i] = last;
     }
     return tower_z;
+}
+
+std::vector<char> compacted_wipe_tower_climb_layers(const std::vector<float>                   &print_z,
+                                                    const std::vector<float>                   &layer_height,
+                                                    const std::vector<char>                    &layer_is_printed,
+                                                    const std::vector<CompactedTowerRiseLimit> &limits,
+                                                    float                                       base_z)
+{
+    assert(layer_height.size() == print_z.size() && layer_is_printed.size() == print_z.size());
+    std::vector<char> climbs(print_z.size(), 0);
+    // Past the last toolchange the nozzle never comes down to the tower again.
+    size_t end = print_z.size();
+    while (end > 0 && ! layer_is_printed[end - 1])
+        --end;
+    // Aim a hundredth of a millimetre short of each limit, so that rounding in the stacked layer
+    // heights cannot tip a layer of a long climb over it.
+    const float slack   = 0.01f;
+    float       tower_z = base_z; // summed the way compute_compacted_wipe_tower_z() sums it
+    for (size_t i = 0; i < end; ++i) {
+        if (! layer_is_printed[i]) {
+            bool too_far = false;
+            for (const CompactedTowerRiseLimit &limit : limits)
+                too_far = too_far || std::min(limit.top, print_z[i]) - tower_z > limit.allowed_rise - slack;
+            if (! too_far)
+                continue;
+            climbs[i] = 1;
+        }
+        tower_z += layer_height[i];
+    }
+    return climbs;
 }
 
 bool wipe_tower_sparse_layers_combined(const PrintConfig &config)
@@ -4770,6 +4801,8 @@ bool WipeTower::layer_is_printed(bool toolchanges_on_layer) const
 {
     if (m_layer_info != m_plan.end() && m_layer_info->combined_away)
         return false;
+    if (m_layer_info != m_plan.end() && m_layer_info->climbs)
+        return true;
     return ! m_sparse_layers_skipped || toolchanges_on_layer;
 }
 
@@ -4928,6 +4961,15 @@ void WipeTower::generate_new(std::vector<std::vector<WipeTower::ToolChangeResult
     // Before planning: the layer heights this rewrites feed the extrusion flow of every later pass.
     if (m_sparse_layers_combined)
         combine_sparse_wipe_tower_plan(m_plan, m_filpar, m_first_layer_idx, m_current_tool);
+    if (m_sparse_layers_skipped) {
+        climb_compacted_wipe_tower_plan(m_plan, m_rise_limits, m_compacted_base_z);
+        // The tower stands on the first layer it prints, which a climb can bring below the first toolchange.
+        for (size_t idx = 0; idx < m_plan.size() && idx < m_first_layer_idx; ++idx)
+            if (m_plan[idx].climbs) {
+                m_first_layer_idx = idx;
+                break;
+            }
+    }
     m_wipe_tower_height = m_plan.back().z;//real wipe_tower_height
     plan_tower_new();
     m_layer_info = m_plan.begin();
@@ -5128,6 +5170,9 @@ void WipeTower::generate_new(std::vector<std::vector<WipeTower::ToolChangeResult
         if (layer.combined_away)
             for (WipeTower::ToolChangeResult &tcr : layer_result)
                 tcr.combined_away = true;
+        if (layer.climbs)
+            for (WipeTower::ToolChangeResult &tcr : layer_result)
+                tcr.climbs = true;
         result.emplace_back(std::move(layer_result));
     }
     assert(m_outer_wall.size() == m_plan.size());

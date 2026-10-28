@@ -74,6 +74,14 @@ public:
 	// Set the extruder properties.
     void set_extruder(size_t idx, const PrintConfig& config);
 
+    // Orca: how far each object may rise above the compacted tower, which decides the sparse layers it
+    // prints to keep up. base_z is where the compacted tower starts.
+    void set_compacted_tower_rise_limits(std::vector<CompactedTowerRiseLimit> limits, float base_z)
+    {
+        m_rise_limits      = std::move(limits);
+        m_compacted_base_z = base_z;
+    }
+
 	// Appends into internal structure m_plan containing info about the future wipe tower
 	// to be used before building begins. The entries must be added ordered in z.
     void plan_toolchange(float z_par, float layer_height_par, unsigned int old_tool, unsigned int new_tool, float wipe_volume = 0.f);
@@ -277,6 +285,8 @@ private:
     float           m_bridging                  = 0.f;
     bool            m_sparse_layers_skipped     = false;
     bool            m_sparse_layers_combined    = false;
+    std::vector<CompactedTowerRiseLimit> m_rise_limits;
+    float           m_compacted_base_z          = 0.f;
     bool            m_set_extruder_trimpot      = false;
     bool            m_adhesion                  = true;
     GCodeFlavor     m_gcode_flavor;
@@ -379,6 +389,8 @@ private:
 		float depth;	// depth of the layer based on all layers above
 		// Folded into a later, thicker layer, so this one prints nothing at all.
 		bool  combined_away{false};
+		// Printed without a toolchange, so that the compacted tower keeps up with the objects.
+		bool  climbs{false};
 		float toolchanges_depth() const { float sum = 0.f; for (const auto &a : tool_changes) sum += a.required_depth; return sum; }
 
 		std::vector<ToolChange> tool_changes;

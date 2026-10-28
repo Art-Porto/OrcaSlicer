@@ -1652,6 +1652,8 @@ struct CompactedTowerClearance
     double far_clearance;
     // The object sits within the toolhead radius, so the head body limits it rather than the rod.
     bool   near_body;
+    // The object sits within the nozzle cone, so it may not rise above the tower at all.
+    bool   near_nozzle;
     // Horizontal clearance this particular object has to keep from the tower: the full toolhead
     // radius once it rises past the nozzle cone, the bare cone while it stays below. It is what the
     // error message quotes and what the plater grows the object outline by.

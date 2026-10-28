@@ -6421,7 +6421,8 @@ void GLCanvas3D::update_compacted_wipe_tower_clearance()
 
             const Polygon outline = compacted_wipe_tower_offender_outline(inst_hull, clearance.body_clearance);
             outlines.emplace_back(outline);
-            if (object_top <= clearance.allowed_rise + EPSILON)
+            // Away from the toolhead the tower climbs with the object, so only a near one has a height limit.
+            if ((! clearance.near_nozzle && ! clearance.near_body) || object_top <= clearance.allowed_rise + EPSILON)
                 continue;
             height_polygons.emplace_back(outline, float(clearance.allowed_rise));
         }

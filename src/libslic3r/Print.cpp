@@ -1352,6 +1352,7 @@ CompactedTowerClearance compacted_wipe_tower_clearance(const PrintConfig &config
     const Polygons inst_near_nozzle = offset(inst_hull, float(scale_(compacted_tower_half_clearance(MAX_OUTER_NOZZLE_DIAMETER))), jtRound, scale_(0.1));
     const bool     near_nozzle      = ! intersection(zone.grown_nozzle, inst_near_nozzle).empty();
     result.near_body                = false;
+    result.near_nozzle              = near_nozzle;
     if (! object_is_short) {
         const Polygons inst_near_body = offset(inst_hull, float(scale_(compacted_tower_half_clearance(zone.body_radius))), jtRound, scale_(0.1));
         result.near_body              = ! intersection(zone.grown_body, inst_near_body).empty();
@@ -1476,6 +1477,11 @@ StringObjectException Print::compacted_wipe_tower_clearance_valid(const Print &p
             if (inst_hull.points.empty())
                 continue;
             const CompactedTowerClearance clearance = compacted_wipe_tower_clearance(config, zone, inst_hull, object_top);
+            // Orca: away from the toolhead only the rod and the lid limit an object, and the compacted tower
+            // climbs to stay within that clearance of it (see compacted_wipe_tower_rise_limits()). Only an
+            // object within the toolhead's reach is still refused: the tower would have to follow it.
+            if (! clearance.near_nozzle && ! clearance.near_body)
+                continue;
             body_tier_used                          = body_tier_used || compacted_tower_body_tier(clearance);
             // Every tier the precise check applies is applied here too, otherwise an object standing
             // within the toolhead radius would pass here and then be rejected mid-slice, which is the
@@ -1512,6 +1518,34 @@ StringObjectException Print::compacted_wipe_tower_clearance_valid(const Print &p
         append(*polygons, offenders);
     }
     return exception;
+}
+
+// Orca: how far each object may rise above the compacted tower, by the same clearance rule both checks
+// apply. The tower prints the sparse layers it needs to keep within it, so that a tall object far from
+// the tower is not refused. The tower is not generated yet, so its footprint is the estimate the
+// pre-slice check uses, which encloses the printed one and so never allows more than the precise check.
+static std::vector<CompactedTowerRiseLimit> compacted_wipe_tower_rise_limits(const Print &print)
+{
+    std::vector<CompactedTowerRiseLimit> limits;
+    const PrintConfig &config = print.config();
+    if (! wipe_tower_sparse_layers_skipped(config) || config.print_sequence != PrintSequence::ByLayer)
+        return limits;
+
+    const CompactedTowerZone zone = compacted_wipe_tower_zone(config, estimated_wipe_tower_footprint(print));
+    for (const PrintObject *object : print.objects()) {
+        const double object_top = unscaled<double>(object->max_z());
+        for (const PrintInstance &instance : object->instances()) {
+            const Polygon inst_hull = compacted_tower_print_instance_hull(*object, instance);
+            if (inst_hull.points.empty())
+                continue;
+            // Without a footprint to measure from, assume the lower of the rod and the lid.
+            const double allowed_rise = zone.empty() ?
+                std::min(config.extruder_clearance_height_to_rod.value, config.extruder_clearance_height_to_lid.value) :
+                compacted_wipe_tower_clearance(config, zone, inst_hull, object_top).allowed_rise;
+            limits.push_back({ float(object_top), float(allowed_rise) });
+        }
+    }
+    return limits;
 }
 
 // With wipe_tower_no_sparse_layers the tower only grows on layers that carry a real toolchange,
@@ -5356,6 +5390,7 @@ void Print::_make_wipe_tower()
             wipe_tower.set_has_filament_switcher(hfs && hfs->value);
         }
         wipe_tower.set_shared_print_bed(this->get_extruder_shared_printable_polygon());
+        wipe_tower.set_compacted_tower_rise_limits(compacted_wipe_tower_rise_limits(*this), float(m_config.z_offset.value));
         // Set the extruder & material properties at the wipe tower object.
         for (size_t i = 0; i < number_of_extruders; ++i)
             wipe_tower.set_extruder(i, m_config);
@@ -5545,6 +5580,7 @@ void Print::_make_wipe_tower()
 
         // wipe_tower.set_retract();
         // wipe_tower.set_zhop();
+        wipe_tower.set_compacted_tower_rise_limits(compacted_wipe_tower_rise_limits(*this), float(m_config.z_offset.value));
 
         // Set the extruder & material properties at the wipe tower object.
         for (size_t i = 0; i < number_of_extruders; ++i)

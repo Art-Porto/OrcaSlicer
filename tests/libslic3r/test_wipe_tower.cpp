@@ -1,5 +1,6 @@
 #include <catch2/catch_all.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 #include "libslic3r/Polygon.hpp"
@@ -192,6 +193,39 @@ TEST_CASE("The compacted tower falls one layer height behind the object per spar
     const std::vector<float> no_offset = compute_compacted_wipe_tower_z({{make_tcr(0, 1, 0.2f)}, {}}, 0.f);
     CHECK_THAT(no_offset[0], WithinAbs(0.2f, 1e-5f));
     CHECK_THAT(no_offset[1], WithinAbs(0.2f, 1e-5f));
+}
+
+TEST_CASE("The compacted tower climbs only as far as the clearance needs, up to its last toolchange", "[WipeTower][NoSparseLayers]") {
+    // Twenty 1 mm layers with a toolchange on the 1st and the 15th only, and one object 18 mm tall.
+    const size_t       n = 20;
+    std::vector<float> print_z(n);
+    std::vector<float> height(n, 1.f);
+    std::vector<char>  printed(n, 0);
+    for (size_t i = 0; i < n; ++i)
+        print_z[i] = float(i + 1);
+    printed[0] = printed[14] = 1;
+
+    // The tower is 1 mm tall from the first layer on. The object may stand 4.5 mm above it, so the 6th
+    // layer is the first that cannot be skipped, and from there the tower keeps up layer by layer.
+    // Past the last toolchange the nozzle never comes down again, so nothing more is printed.
+    const std::vector<char> climbs = compacted_wipe_tower_climb_layers(print_z, height, printed, {{18.f, 4.5f}}, 0.f);
+    REQUIRE(climbs.size() == n);
+    for (size_t i = 0; i < n; ++i) {
+        INFO("layer " << i + 1);
+        CHECK(bool(climbs[i]) == (i >= 5 && i <= 13));
+    }
+
+    // With room for the whole object above the tower, nothing climbs.
+    const std::vector<char> none = compacted_wipe_tower_climb_layers(print_z, height, printed, {{18.f, 20.f}}, 0.f);
+    CHECK(std::none_of(none.begin(), none.end(), [](char c) { return c != 0; }));
+}
+
+TEST_CASE("A sparse layer the compacted tower climbs on is printed", "[WipeTower][NoSparseLayers]") {
+    WipeTower::ToolChangeResult climb = make_tcr(1, 1, 0.2f);
+    climb.climbs                      = true;
+    CHECK_FALSE(wipe_tower_layer_is_sparse({climb}));
+    const std::vector<float> tower_z = compute_compacted_wipe_tower_z({{make_tcr(0, 1, 0.2f)}, {make_tcr(1, 1, 0.2f)}, {climb}}, 0.f);
+    CHECK_THAT(tower_z[2], WithinAbs(0.4f, 1e-5f));
 }
 
 TEST_CASE("The tower keep-out zone grows by the spiral z-hop envelope", "[WipeTower][NoSparseLayers]") {

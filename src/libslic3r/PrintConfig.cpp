@@ -7208,7 +7208,8 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("If enabled, the wipe tower will not be printed on layers with no tool changes. "
                     "On layers with a tool change, extruder will travel downward to print the wipe tower, "
                     "so the tower ends up below the model and the toolhead has to reach down to it. "
-                    "Layouts where that would collide with an already printed object are rejected. "
+                    "Where an object would rise too far above the tower for the toolhead to clear it, the tower prints "
+                    "the layers it needs to keep up. Objects too close to the tower are rejected. "
                     "Has no effect with smooth timelapse or clumping detection, which need a tower on every layer.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));

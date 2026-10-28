@@ -60,13 +60,16 @@ the tower classes, rather than each re-deriving the answer from the raw options:
   questions the emitter asks about generated results.
 - `compute_compacted_wipe_tower_z` — the tower's print z per planned layer when
   it is compacted.
+- `compacted_wipe_tower_climb_layers` and its `climb_compacted_wipe_tower_plan`
+  wrapper — the sparse layers a compacted tower prints anyway, to keep up with
+  the objects.
 - `combine_sparse_wipe_tower_layers` and its `combine_sparse_wipe_tower_plan`
   wrapper — the merge rule, applied to either generator's plan.
 
 Both tower generators are driven through these. `WipeTower` (Type 1, the block
 tower) and `WipeTower2` (Type 2, the default) keep separate plans with the same
-per-layer shape — print z, layer height, toolchanges, and a `combined_away` flag
-— so one template covers both.
+per-layer shape — print z, layer height, toolchanges, and the `combined_away`
+and `climbs` flags — so one template covers each rule.
 
 ## Dropping sparse layers
 
@@ -91,6 +94,38 @@ rule serves the precise check on real extrusions, the pre-slice estimate that
 feeds the plater, and the outlines the plater draws while an object is dragged,
 so that the ring the user sees touches the object's outline exactly when the
 check trips.
+
+## Climbing with the objects
+
+Away from the toolhead, only the rod and the lid limit how far an object may
+rise above the compacted tower, and a tall object whose filament changes near
+its top would pass them by far. Rather than refuse such a plate, the tower
+climbs: it prints a sparse layer whenever skipping it would leave an object more
+than its allowed rise above the tower top.
+
+The tower never gains on the objects, since it grows by at most the object's
+layer height per layer. Falling behind on a layer that does not visit the tower
+would therefore be just as final as on one that does, so the rule holds on every
+layer up to the last change; above it the nozzle never comes down again, and
+nothing more is printed. A layer prints only once skipping it would break the
+limit, so the tower stays as short as the clearance allows. It aims a hundredth
+of a millimetre short of each limit, so that rounding in the stacked layer
+heights cannot tip a layer of a long climb over it.
+
+`Print::_make_wipe_tower` hands the tower each object's top and allowed rise,
+measured by the same clearance rule on the estimated footprint the pre-slice
+check uses, which encloses the printed one. `climb_compacted_wipe_tower_plan`
+sets `climbs` on the layers to print before the tower's depths are planned,
+generation copies it onto the results, and `wipe_tower_layer_is_sparse` stops
+treating those layers as sparse. Emission, the compacted z, filament accounting
+and the precise check then follow without a change of their own. On a Type 1
+tower a climb can start below the first change, and the first layer it prints
+becomes the tower's first layer, brim included.
+
+An object within the toolhead's reach of the tower is still refused before
+slicing: the tower would have to follow it almost layer by layer, and moving the
+object is the better answer. The pre-slice check and the plater's height limit
+plane apply to those objects only.
 
 ## Merging sparse layers
 
@@ -193,5 +228,6 @@ read as off rather than compacting or merging in one place and not another.
   and the clearance geometry the plater draws.
 - [Slicing tests](../../tests/fff_print/test_wipe_tower.cpp) slice a real print
   and check that a run folds, that the tower still covers the object exactly
-  once, that a run too thin for the cap is left alone, and that a merged layer
-  declares its height in the tag the printer's processor reads.
+  once, that a run too thin for the cap is left alone, that a merged layer
+  declares its height in the tag the printer's processor reads, and that a
+  compacted tower climbs with a part taller than the clearance.
