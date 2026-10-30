@@ -277,19 +277,29 @@ TriangleMesh trunk_mesh()
     return mesh;
 }
 
-std::vector<BaseAreaPaths> trunk_base_areas(const char *style, const char *pattern)
+std::vector<BaseAreaPaths> trunk_base_areas(const char *style, const char *pattern, int wall_count)
 {
     Slic3r::Print print;
     slice_with_tree_support(trunk_mesh(), print, style, 30, 1, 0, {
         { "support_base_pattern",    pattern },
-        { "tree_support_wall_count", 0 },
+        { "tree_support_wall_count", wall_count },
     });
     return base_areas(print);
 }
 
 } // namespace
 
-// With Support wall loops at 0 (auto), a support area that gets infill keeps a wall around it.
+// Support wall loops is auto (-1) unless set, and a value of -1 is kept as it is when loaded.
+TEST_CASE("Tree support wall loops default to auto", "[TreeSupport]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    CHECK(config.opt_int("tree_support_wall_count") == -1);
+    config.set_deserialize_strict({ { "tree_support_wall_count", 0 } });
+    config.set_deserialize_strict({ { "tree_support_wall_count", "-1" } });
+    CHECK(config.opt_int("tree_support_wall_count") == -1);
+}
+
+// With Support wall loops at -1 (auto), a support area that gets infill keeps a wall around it.
 // Without one, the infill lines of each layer stand on those below as separate plates with nothing
 // tying them together, and a tall support folds over.
 TEST_CASE("Tree support infill keeps a wall around it when the wall count is auto", "[TreeSupport]")
@@ -299,7 +309,7 @@ TEST_CASE("Tree support infill keeps a wall around it when the wall count is aut
     CAPTURE(style, pattern);
 
     size_t infilled = 0;
-    for (const BaseAreaPaths &paths : trunk_base_areas(style, pattern))
+    for (const BaseAreaPaths &paths : trunk_base_areas(style, pattern, -1))
         if (paths.infilled) {
             ++ infilled;
             CHECK(paths.walled);
@@ -309,14 +319,26 @@ TEST_CASE("Tree support infill keeps a wall around it when the wall count is aut
         REQUIRE(infilled > 0);
 }
 
+// With Support wall loops at 0, support thick enough may still be printed as infill alone, as auto did
+// before -1 was added.
+TEST_CASE("Tree support infill may go without a wall when the wall count is 0", "[TreeSupport]")
+{
+    const char *style = GENERATE("tree_slim", "tree_strong");
+    CAPTURE(style);
+
+    const std::vector<BaseAreaPaths> areas = trunk_base_areas(style, "rectilinear", 0);
+    CHECK(std::any_of(areas.begin(), areas.end(), [](const BaseAreaPaths &paths) { return paths.infilled && ! paths.walled; }));
+}
+
 // Default and Hollow print no infill in tree branches or trunks, so saved projects slice as before.
 TEST_CASE("Tree support stays hollow with the Default and Hollow base patterns", "[TreeSupport]")
 {
-    const char *style   = GENERATE("tree_slim", "tree_strong", "organic");
-    const char *pattern = GENERATE("default", "hollow");
-    CAPTURE(style, pattern);
+    const char *style      = GENERATE("tree_slim", "tree_strong", "organic");
+    const char *pattern    = GENERATE("default", "hollow");
+    const int   wall_count = GENERATE(-1, 0);
+    CAPTURE(style, pattern, wall_count);
 
-    const std::vector<BaseAreaPaths> areas = trunk_base_areas(style, pattern);
+    const std::vector<BaseAreaPaths> areas = trunk_base_areas(style, pattern, wall_count);
     CHECK(count_areas(areas, false) > 0);
     CHECK(std::none_of(areas.begin(), areas.end(), [](const BaseAreaPaths &paths) { return paths.infilled; }));
 }
