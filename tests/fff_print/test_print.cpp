@@ -2946,10 +2946,11 @@ TEST_CASE("No sparse layers lets an object away from the tower rise past the lid
     CHECK_FALSE(print.wipe_tower_data().tool_changes.empty());
 }
 
-TEST_CASE("No sparse layers still refuses an object that rises past the lid clearance above the tower", "[Print][PrimeTower]")
+TEST_CASE("No sparse layers climbs the tower with an object that rises past the lid clearance above it", "[Print][PrimeTower]")
 {
     Model model;
-    // The filament only changes from 30 mm up, by when the compacted tower is still a few layers tall.
+    // The filament only changes from 30 mm up, so a tower grown by the tool changes alone would still be
+    // a few layers tall there. It prints the sparse layers it needs to stay within the clearance instead.
     print_upper_part_with_filament_2(*add_object(model, make_cube(20., 20., 40.), 20., 20.), 30., 40.);
     Print print;
     print.apply(model, prime_tower_config({
@@ -2959,7 +2960,8 @@ TEST_CASE("No sparse layers still refuses an object that rises past the lid clea
     }));
 
     CHECK(print.validate().string.empty());
-    REQUIRE_THROWS_WITH(print.process(), Catch::Matchers::ContainsSubstring("No sparse layers"));
+    REQUIRE_NOTHROW(print.process());
+    CHECK_FALSE(print.wipe_tower_data().tool_changes.empty());
 }
 
 TEST_CASE("An object takes the layer height limits of the extruder of its own filament", "[Print]")

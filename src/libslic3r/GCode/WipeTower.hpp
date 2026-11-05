@@ -39,6 +39,14 @@ Polylines construct_gap_for_skip_points(
 const char* flush_planner_queue_command(GCodeFlavor flavor); // finish queued moves, e.g. around M104/M109
 std::string wait_command(GCodeFlavor flavor, float seconds);  // pause for `seconds`
 
+// How far one object may rise above the compacted tower: it reaches up to top, and the toolhead
+// clears it as long as it stands no more than allowed_rise above the tower.
+struct CompactedTowerRiseLimit
+{
+    float top;
+    float allowed_rise;
+};
+
 class WipeTower
 {
 public:
@@ -162,6 +170,9 @@ public:
         // Orca: folded into a later, thicker layer, so the emitter drops it. Set by the tower, so
         // the two cannot disagree about which layers print.
         bool               combined_away = false;
+        // Orca: a toolchange-free layer the compacted tower prints anyway, to keep up with the
+        // objects. Set by the tower, so the emitter and the validator cannot disagree about it.
+        bool               climbs = false;
 
 		// Sum the total length of the extrusion.
 		float total_extrusion_length_in_plane() {
@@ -364,6 +375,14 @@ public:
 
 	void set_has_tpu_filament(bool has_tpu) { m_has_tpu_filament = has_tpu; }
 
+    // Orca: how far each object may rise above the compacted tower, which decides the sparse layers it
+    // prints to keep up. base_z is where the compacted tower starts.
+    void set_compacted_tower_rise_limits(std::vector<CompactedTowerRiseLimit> limits, float base_z)
+    {
+        m_rise_limits      = std::move(limits);
+        m_compacted_base_z = base_z;
+    }
+
     bool has_tpu_filament() const { return m_has_tpu_filament; }
     struct FilamentParameters {
         std::string 	    material = "PLA";
@@ -536,6 +555,8 @@ private:
     float           m_bridging                  = 0.f;
     bool            m_sparse_layers_skipped     = false;
     bool            m_sparse_layers_combined    = false;
+    std::vector<CompactedTowerRiseLimit> m_rise_limits;
+    float           m_compacted_base_z          = 0.f;
     // BBS: remove useless config
     //bool            m_set_extruder_trimpot      = false;
     bool            m_adhesion                  = true;
@@ -652,6 +673,8 @@ private:
         bool  extruder_fill{true};
 		// Folded into a later, thicker layer, so this one prints nothing at all.
 		bool  combined_away{false};
+		// Printed without a toolchange, so that the compacted tower keeps up with the objects.
+		bool  climbs{false};
 		float toolchanges_depth() const { float sum = 0.f; for (const auto &a : tool_changes) sum += a.required_depth; return sum; }
 
 		std::vector<ToolChange> tool_changes;
@@ -708,7 +731,8 @@ private:
 // the clearance validator all ask this single question, so none of them can compact on its own.
 bool wipe_tower_sparse_layers_skipped(const PrintConfig &config);
 
-// A planned layer prints no tower at all when its only toolchange keeps the same filament.
+// A planned layer prints no tower at all when its only toolchange keeps the same filament, unless the
+// compacted tower climbs on it.
 bool wipe_tower_layer_is_sparse(const std::vector<WipeTower::ToolChangeResult> &layer_tool_changes);
 
 // Print z the compacted tower reaches on every planned layer. Sparse layers carry over the
@@ -716,6 +740,38 @@ bool wipe_tower_layer_is_sparse(const std::vector<WipeTower::ToolChangeResult> &
 // the z the tower starts from, which Orca offsets by z_offset.
 std::vector<float> compute_compacted_wipe_tower_z(const std::vector<std::vector<WipeTower::ToolChangeResult>> &tool_changes,
                                                   float base_z = 0.f);
+
+// Sparse layers the compacted tower prints anyway, so that it climbs with the objects rather than
+// falling more than allowed_rise below one of them. The nozzle only comes down to the tower on the
+// layers it prints, but the tower never gains on the objects, so it has to keep up on every layer
+// up to the last one it prints. A sparse layer is printed only once skipping it would leave an object
+// too far above the tower, which keeps the tower as short as the clearance allows. layer_is_printed
+// marks the layers with a toolchange; base_z is the one compute_compacted_wipe_tower_z() starts from.
+std::vector<char> compacted_wipe_tower_climb_layers(const std::vector<float>                   &print_z,
+                                                    const std::vector<float>                   &layer_height,
+                                                    const std::vector<char>                    &layer_is_printed,
+                                                    const std::vector<CompactedTowerRiseLimit> &limits,
+                                                    float                                       base_z);
+
+// Applies the rule above to a planned tower. Either generator's plan fits: both carry z, height,
+// tool_changes and climbs per layer.
+template<class PlanLayers>
+void climb_compacted_wipe_tower_plan(PlanLayers &plan, const std::vector<CompactedTowerRiseLimit> &limits, float base_z)
+{
+    const size_t       n = plan.size();
+    std::vector<float> print_z(n);
+    std::vector<float> heights(n);
+    std::vector<char>  printed(n);
+    for (size_t i = 0; i < n; ++i) {
+        print_z[i] = plan[i].z;
+        heights[i] = plan[i].height;
+        printed[i] = plan[i].tool_changes.empty() ? 0 : 1;
+    }
+
+    const std::vector<char> climbs = compacted_wipe_tower_climb_layers(print_z, heights, printed, limits, base_z);
+    for (size_t i = 0; i < n; ++i)
+        plan[i].climbs = climbs[i] != 0;
+}
 
 
 // Combination rule for wipe_tower_sparse_layers_combination. Nothing is compacted - the tower keeps
