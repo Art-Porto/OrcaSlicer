@@ -1,4 +1,5 @@
 #include "ClipperUtils.hpp"
+#include <cstdlib> // TEMPORARY, test branch only
 #include "IMEXHelpers.hpp"
 #include "Geometry.hpp"
 #include "CustomGCode.hpp"
@@ -2295,7 +2296,8 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
         const auto other_height     = [this](const PrintObject *object) {
             return std::abs(object->slicing_parameters().object_print_z_height() - m_objects.front()->slicing_parameters().object_print_z_height()) > EPSILON;
         };
-        const bool overridden = this->has_wipe_tower() &&
+        // TEMPORARY, test branch only: lets a test measure the tower without the override.
+        const bool overridden = std::getenv("ORCA_TEST_KEEP_PRECISE_Z") == nullptr && this->has_wipe_tower() &&
             std::any_of(m_objects.begin(), m_objects.end(), precise_z_height) &&
             std::any_of(m_objects.begin(), m_objects.end(), custom_layering) &&
             std::any_of(m_objects.begin(), m_objects.end(), other_height);

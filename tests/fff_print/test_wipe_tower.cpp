@@ -1101,3 +1101,66 @@ TEST_CASE("Smooth timelapse prints each tower layer's wall once when a layer joi
     slice_precise_z_pair(config, "type1", 10.004, print);
     CHECK(count_joined_layers(print) > 0);
 }
+
+#include <cstdlib>
+
+// TEMPORARY, test branch only: reports the tower depth of the 10.05 mm plate above with and without
+// the precise Z override, and fails on purpose so that the CI log shows the numbers.
+static float temporary_tower_depth(const char *type, bool keep_precise_z)
+{
+#ifdef _WIN32
+    _putenv_s("ORCA_TEST_KEEP_PRECISE_Z", keep_precise_z ? "1" : "");
+#else
+    if (keep_precise_z)
+        setenv("ORCA_TEST_KEEP_PRECISE_Z", "1", 1);
+    else
+        unsetenv("ORCA_TEST_KEEP_PRECISE_Z");
+#endif
+    const DynamicPrintConfig config = multifilament_config(2, {
+        { "enable_prime_tower",         "1"         },
+        { "wipe_tower_type",            type        },
+        { "wipe_tower_x",               "50"        },
+        { "wipe_tower_y",               "50"        },
+        { "layer_change_gcode",         "G92 E0\n" },
+        { "layer_height",               "0.2"       },
+        { "initial_layer_print_height", "0.2"       },
+        { "precise_z_height",           "1"         },
+        { "raft_layers",                "0"         } });
+    const std::vector<std::vector<ConfigBase::SetDeserializeItem>> overrides{ { { "extruder", "1" } }, { { "extruder", "2" } } };
+    const std::vector<coordf_t> profile = { 0., 0.2, 5., 0.2, 10., 0.1, 20., 0.1 };
+
+    Print print;
+    Model model;
+    init_print(std::vector<TriangleMesh>{ make_cube(20, 20, 20), make_cube(20, 20, 10.05) }, print, model, config, &overrides);
+    model.objects[0]->layer_height_profile.set(profile);
+    model.objects[1]->layer_height_profile.set(layer_height_profile_fit_to_height(profile, 10.05));
+    print.apply(model, config);
+    CHECK(print.precise_z_height_overridden() == !keep_precise_z);
+    std::string error = print.validate().string;
+    float       depth = -1.f;
+    if (error.empty()) {
+        try {
+            print.process();
+            depth = print.wipe_tower_data().depth;
+        } catch (const std::exception &ex) {
+            error = ex.what();
+        }
+    }
+    WARN(type << (keep_precise_z ? " without" : " with") << " the override: depth " << depth << " mm, width "
+              << print.wipe_tower_data().width << " mm" << (error.empty() ? "" : ", error: ") << error);
+#ifdef _WIN32
+    _putenv_s("ORCA_TEST_KEEP_PRECISE_Z", "");
+#else
+    unsetenv("ORCA_TEST_KEEP_PRECISE_Z");
+#endif
+    return depth;
+}
+
+TEST_CASE("TEMPORARY tower depth with and without the precise Z override", "[WipeTower]")
+{
+    for (const char *type : { "type1", "type2" }) {
+        temporary_tower_depth(type, false);
+        temporary_tower_depth(type, true);
+    }
+    CHECK(false);
+}
