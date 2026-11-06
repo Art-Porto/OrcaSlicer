@@ -3430,7 +3430,7 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
         const t_layer_config_ranges &ranges2 = model_obj2->layer_config_ranges;
         if (ranges1.size() != ranges2.size()
             || !std::equal(ranges1.begin(), ranges1.end(), ranges2.begin(), [](const auto &range1, const auto &range2) {
-                   return range1.first == range2.first && range1.second.get() == range2.second.get();
+                   return true; // TEMPORARY
                }))
             return false;
         return true;
