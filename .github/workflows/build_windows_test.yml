@@ -5,7 +5,7 @@ name: Build Windows x64 (test)
 on:
   push:
     branches:
-      - vlh3-wintest
+      - vlh4-wintest
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
