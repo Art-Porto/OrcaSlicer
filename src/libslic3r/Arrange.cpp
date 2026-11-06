@@ -1182,7 +1182,6 @@ void _arrange(
     if (params.compacted_tower_growth >= 0 &&
         std::any_of(shapes.begin(), shapes.end(), [&params](const Item &itm) { return itm.height > params.clearance_height_to_rod; })) {
         mod_params.do_final_align = false;
-        mod_params.align_center   = Vec2d(0.5, 0.5);
     }
 
     AutoArranger<BinT> arranger{corrected_bin, mod_params, progressfn, stopfn};
