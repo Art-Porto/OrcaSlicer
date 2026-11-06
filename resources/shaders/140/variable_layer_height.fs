@@ -16,6 +16,7 @@ uniform float dimming;
 in vec2 intensity;
 
 in float object_z;
+in float horizontal;
 
 out vec4 out_color;
 
@@ -35,6 +36,8 @@ void main()
     float dx_vtc = dFdx(z_in_cells);
     float dy_vtc = dFdy(z_in_cells);
     float lod = clamp(0.5 * log2(max(dx_vtc * dx_vtc, dy_vtc * dy_vtc)), 0., 1.);
+    // Orca: a horizontal face gets the colour of the layer height alone, without the stripes.
+    lod = max(lod, horizontal);
     // Sample the Z texture. Texture coordinates are normalized to <0, 1>.
     vec4 color = vec4(0.25, 0.25, 0.25, 1.0);
     if (z_texture_row >= 0.0)
