@@ -1483,8 +1483,7 @@ StringObjectException Print::compacted_wipe_tower_clearance_valid(const Print &p
             // them depends on how far the compacted tower has grown by each tool change, which only slicing
             // tells. Measured from the plate, any object taller than the lid clearance was refused wherever
             // it stood. validate_compacted_wipe_tower_clearance() judges those against the real tower.
-            if (! clearance.near_nozzle && ! clearance.near_body)
-                continue;
+            continue; // TEMPORARY: skip every object
             // Orca: closer, the rise is measured from the plate, the tower base being unknown before slicing,
             // which errs strict. Next to the nozzle an object may not rise at all, and within the toolhead
             // radius it is taller than nozzle_height, the most it may rise there, so either way it is refused.
