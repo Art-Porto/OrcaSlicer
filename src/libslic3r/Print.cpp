@@ -5870,7 +5870,6 @@ std::optional<Vec2d> Print::nearest_fitting_wipe_tower_position(const Polygon &f
         return std::nullopt;
 
     Polygons obstacles = offset(get_bed_excluded_area(m_config), float(margin));
-    append(obstacles, offset(wrapping_detection_area(m_config), float(margin)));
     const Point plate_shift(scale_(m_origin.x()), scale_(m_origin.y()));
     for (const PrintObject *object : m_objects) {
         const double brim = object->config().brim_type != btNoBrim ? object->config().brim_width.value : 0.;

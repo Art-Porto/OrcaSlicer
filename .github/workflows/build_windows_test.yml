@@ -5,7 +5,7 @@ name: Build Windows x64 (test)
 on:
   push:
     branches:
-      - towerfit-wintest
+      - towerfit-wintest-nowrap
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
