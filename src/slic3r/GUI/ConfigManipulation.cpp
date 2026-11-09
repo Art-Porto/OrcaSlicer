@@ -799,9 +799,11 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
     }
 
     // Orca: a height range that leaves its layer heights to the variable layer height tool does not use its own.
-    const ConfigOption *range_follows_vlh = config->option("range_variable_layer_height");
-    toggle_field("layer_height", range_follows_vlh == nullptr || !range_follows_vlh->getBool(), -1,
-                 _L("The variable layer height tool sets the layer heights inside this height range."));
+    if (!is_global_config) {
+        const ConfigOption *range_follows_vlh = config->option("range_variable_layer_height");
+        toggle_field("layer_height", range_follows_vlh == nullptr || !range_follows_vlh->getBool(), -1,
+                     _L("The variable layer height tool sets the layer heights inside this height range."));
+    }
 
     bool have_volumetric_extrusion_rate_slope = config->option<ConfigOptionFloat>("max_volumetric_extrusion_rate_slope")->value > 0;
     float have_volumetric_extrusion_rate_slope_segment_length = config->option<ConfigOptionFloat>("max_volumetric_extrusion_rate_slope_segment_length")->value;
