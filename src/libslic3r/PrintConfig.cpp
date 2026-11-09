@@ -1139,7 +1139,8 @@ void PrintConfigDef::init_common_params()
     def->min = 0;
     def->set_default_value(new ConfigOptionFloat(INITIAL_LAYER_HEIGHT));
 
-    // Orca: only read from the config of a height range.
+    // Orca: only read from the config of a height range. It has no category, so the settings menus of objects
+    // and parts do not offer it; the Frequent page of a height range shows it.
     def = this->add("range_variable_layer_height", coBool);
     def->label = L("Variable layer height");
     def->tooltip = L("Let the variable layer height tool choose the layer heights inside this height range, as it does "

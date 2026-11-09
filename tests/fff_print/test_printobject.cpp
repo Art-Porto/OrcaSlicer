@@ -802,6 +802,36 @@ TEST_CASE("Adaptive layer height follows the surface inside a range left to the 
     CHECK(std::any_of(heights.begin(), heights.end(), [](double height) { return std::abs(height - 0.15) > 1e-3; }));
 }
 
+// The adaptive profile of the sphere of range_profile(), and the same profile after a stroke of the
+// variable layer height tool that thins the layers around z = 5 mm, inside the range.
+static std::pair<std::vector<double>, std::vector<double>> painted_profile(bool follows)
+{
+    Print print;
+    Model model;
+    init_print({ make_sphere(10.) }, print, model, { { "layer_height", "0.2" }, { "initial_layer_print_height", "0.2" } });
+    DynamicPrintConfig range_config;
+    range_config.set_key_value("layer_height", new ConfigOptionFloat(0.15));
+    if (follows)
+        range_config.set_key_value("range_variable_layer_height", new ConfigOptionBool(true));
+    model.objects.front()->layer_config_ranges[{ 2., 8. }].assign_config(std::move(range_config));
+    print.apply(model, DynamicPrintConfig(print.full_print_config()));
+    REQUIRE(print.objects().size() == 1);
+
+    const SlicingParameters &params  = print.objects().front()->slicing_parameters();
+    const std::vector<double> before = layer_height_profile_adaptive(params, *model.objects.front(), 0.5f);
+    std::vector<double>       after  = before;
+    adjust_layer_height_profile(*model.objects.front(), params, after, 5., 0.05, 2., LAYER_HEIGHT_EDIT_ACTION_DECREASE);
+    return { before, after };
+}
+
+TEST_CASE("The variable layer height tool paints inside a range only when the range is left to it", "[PrintObject]")
+{
+    const auto [kept_before, kept_after] = painted_profile(false);
+    CHECK(kept_after == kept_before);
+    const auto [left_before, left_after] = painted_profile(true);
+    CHECK(left_after != left_before);
+}
+
 TEST_CASE("A range left to the variable layer height prints at the object's layer height without a profile", "[PrintObject]")
 {
     const std::vector<double> follows = range_profile(true, false, 0.15);
