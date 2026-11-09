@@ -1491,7 +1491,7 @@ private:
     void                _make_skirt();
     // A tower that does not fit where it is placed is moved to the nearest spot where it does when
     // move_to_fit is set, and refused otherwise.
-    void                _make_wipe_tower(bool move_to_fit = true);
+    void                _make_wipe_tower(bool move_to_fit = false);
     // The position nearest `position` where the generated tower's `footprint` (relative to its position,
     // brim included) fits the printable area, clear of the objects and the exclusion areas.
     std::optional<Vec2d> nearest_fitting_wipe_tower_position(const Polygon &footprint, const Vec2d &position) const;
