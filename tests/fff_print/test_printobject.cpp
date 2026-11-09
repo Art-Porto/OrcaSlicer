@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <iterator>
 #include "libslic3r/TriangleMesh.hpp"
+#include "libslic3r/Slicing.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Geometry.hpp"
@@ -738,5 +739,106 @@ TEST_CASE("Z contouring follows the surface of each instance as it is turned", "
         // Enough points in common to mean something, and contouring did move some of them.
         CHECK(matched > 100);
         CHECK(lifted > 0);
+    }
+}
+
+// The layer height profile of a 20 mm sphere with a height range from 2 to 8 mm that asks for
+// `range_layer_height`, and leaves its layer heights to the variable layer height tool if `follows`.
+// `adaptive` picks the profile the Adaptive button computes, otherwise the one sliced without a
+// variable layer height profile.
+static std::vector<double> range_profile(bool follows, bool adaptive, double range_layer_height)
+{
+    Print print;
+    Model model;
+    init_print({ make_sphere(10.) }, print, model, { { "layer_height", "0.2" }, { "initial_layer_print_height", "0.2" } });
+    DynamicPrintConfig range_config;
+    range_config.set_key_value("layer_height", new ConfigOptionFloat(range_layer_height));
+    if (follows)
+        range_config.set_key_value("range_variable_layer_height", new ConfigOptionBool(true));
+    model.objects.front()->layer_config_ranges[{ 2., 8. }].assign_config(std::move(range_config));
+    print.apply(model, DynamicPrintConfig(print.full_print_config()));
+    REQUIRE(print.objects().size() == 1);
+
+    const SlicingParameters &params = print.objects().front()->slicing_parameters();
+    return adaptive ? layer_height_profile_adaptive(params, *model.objects.front(), 0.5f) :
+                      layer_height_profile_from_ranges(params, model.objects.front()->layer_config_ranges);
+}
+
+// The layer heights of the profile's entries inside the range. The adaptive profile has one per layer.
+static std::vector<double> heights_inside_range(const std::vector<double> &profile)
+{
+    std::vector<double> heights;
+    for (size_t i = 0; i + 1 < profile.size(); i += 2)
+        if (profile[i] > 2. + EPSILON && profile[i] < 8. - EPSILON)
+            heights.push_back(profile[i + 1]);
+    return heights;
+}
+
+// The layer height a step profile gives at z: that of its last entry at or below z. The profile built
+// from the ranges has entries only where a range starts or ends.
+static double step_height_at(const std::vector<double> &profile, double z)
+{
+    double height = 0.;
+    for (size_t i = 0; i + 1 < profile.size() && profile[i] <= z + EPSILON; i += 2)
+        height = profile[i + 1];
+    return height;
+}
+
+TEST_CASE("Adaptive layer height keeps the layer height of a height range", "[PrintObject]")
+{
+    const std::vector<double> heights = heights_inside_range(range_profile(false, true, 0.15));
+    REQUIRE(heights.size() > 10);
+    for (double height : heights)
+        CHECK_THAT(height, Catch::Matchers::WithinAbs(0.15, 1e-6));
+}
+
+TEST_CASE("Adaptive layer height follows the surface inside a range left to the variable layer height", "[PrintObject]")
+{
+    // The sphere's slope changes all the way from 2 to 8 mm, so the adaptive profile does too.
+    const std::vector<double> heights = heights_inside_range(range_profile(true, true, 0.15));
+    REQUIRE(heights.size() > 10);
+    const auto [lowest, highest] = std::minmax_element(heights.begin(), heights.end());
+    CHECK(*highest - *lowest > 0.02);
+    CHECK(std::any_of(heights.begin(), heights.end(), [](double height) { return std::abs(height - 0.15) > 1e-3; }));
+}
+
+// The adaptive profile of the sphere of range_profile(), and the same profile after a stroke of the
+// variable layer height tool that thins the layers around z = 5 mm, inside the range.
+static std::pair<std::vector<double>, std::vector<double>> painted_profile(bool follows)
+{
+    Print print;
+    Model model;
+    init_print({ make_sphere(10.) }, print, model, { { "layer_height", "0.2" }, { "initial_layer_print_height", "0.2" } });
+    DynamicPrintConfig range_config;
+    range_config.set_key_value("layer_height", new ConfigOptionFloat(0.15));
+    if (follows)
+        range_config.set_key_value("range_variable_layer_height", new ConfigOptionBool(true));
+    model.objects.front()->layer_config_ranges[{ 2., 8. }].assign_config(std::move(range_config));
+    print.apply(model, DynamicPrintConfig(print.full_print_config()));
+    REQUIRE(print.objects().size() == 1);
+
+    const SlicingParameters &params  = print.objects().front()->slicing_parameters();
+    const std::vector<double> before = layer_height_profile_adaptive(params, *model.objects.front(), 0.5f);
+    std::vector<double>       after  = before;
+    adjust_layer_height_profile(*model.objects.front(), params, after, 5., 0.05, 2., LAYER_HEIGHT_EDIT_ACTION_DECREASE);
+    return { before, after };
+}
+
+TEST_CASE("The variable layer height tool paints inside a range only when the range is left to it", "[PrintObject]")
+{
+    const auto [kept_before, kept_after] = painted_profile(false);
+    CHECK(kept_after == kept_before);
+    const auto [left_before, left_after] = painted_profile(true);
+    CHECK(left_after != left_before);
+}
+
+TEST_CASE("A range left to the variable layer height prints at the object's layer height without a profile", "[PrintObject]")
+{
+    const std::vector<double> follows = range_profile(true, false, 0.15);
+    const std::vector<double> keeps   = range_profile(false, false, 0.15);
+    for (double z : { 3., 5., 7. }) {
+        INFO("z = " << z);
+        CHECK_THAT(step_height_at(follows, z), Catch::Matchers::WithinAbs(0.2, 1e-6));
+        CHECK_THAT(step_height_at(keeps, z), Catch::Matchers::WithinAbs(0.15, 1e-6));
     }
 }
