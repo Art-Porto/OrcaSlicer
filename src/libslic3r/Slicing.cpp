@@ -574,7 +574,9 @@ void adjust_layer_height_profile(
     }
 
     for (auto const& [range,options] : model_object.layer_config_ranges) {
-        if (z >= range.first - current_layer_height && z <= range.second + current_layer_height)
+        // Orca: unless the range leaves its layer heights to this profile.
+        if (!layer_range_follows_variable_layer_height(options) && z >= range.first - current_layer_height &&
+            z <= range.second + current_layer_height)
             return;
     };
 
