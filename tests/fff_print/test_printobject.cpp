@@ -746,7 +746,7 @@ TEST_CASE("Z contouring follows the surface of each instance as it is turned", "
 // object layer is not fixed, so the variable layer height tools may change it.
 static const SlicingParameters& raft_cube_slicing_parameters(Print &print, Model &model)
 {
-    init_print({ TestMesh::cube_20x20x20 }, print, model,
+    init_print({ cube(20) }, print, model,
                { { "raft_layers", "2" }, { "layer_height", "0.2" }, { "initial_layer_print_height", "0.2" },
                  { "min_layer_height", "0.08" }, { "max_layer_height", "0.32" } });
     REQUIRE(print.objects().size() == 1);
