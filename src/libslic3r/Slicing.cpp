@@ -596,9 +596,6 @@ void adjust_layer_height_profile(
 
     // 3) Densify the profile inside z +- band_width/2, remove duplicate Zs from the height profile inside the band.
 	coordf_t lo = std::max(z_span_variable.first,  z - 0.5 * band_width);
-    // Over a raft the variable span starts at the first point of the profile. Start the band just above it, so
-    // that the point is kept and the search below finds a point under the band, as idx needs.
-    lo = std::max(lo, layer_height_profile.front() + EPSILON);
     // Do not limit the upper side of the band, so that the modifications to the top point of the profile will be allowed.
     coordf_t hi = z + 0.5 * band_width;
     coordf_t z_step = 0.1;
