@@ -1760,7 +1760,11 @@ void PerimeterGenerator::process_classic()
                 Polygons dropped_wall_bands;
                 auto reduce_over_top = [&](PerimeterGeneratorLoops &loops) {
                     loops.erase(std::remove_if(loops.begin(), loops.end(), [&](const PerimeterGeneratorLoop &loop) {
-                        const TopOverlap overlap = classify_over_top(loop.polygon.points, one_wall_top_region, top_region_bbox);
+                        TopOverlap overlap = classify_over_top(loop.polygon.points, one_wall_top_region, top_region_bbox);
+                        // A long straight wall can cross the top with no vertex over it: measure the wall itself.
+                        if (overlap == TopOverlap::None && get_extents(loop.polygon).overlap(top_region_bbox) &&
+                            ! intersection_pl(Polylines{ loop.polygon.split_at_first_point() }, one_wall_top_region).empty())
+                            overlap = TopOverlap::Partial;
                         if (overlap == TopOverlap::None)
                             return false;
                         // Only a wall straddling the boundary is worth measuring; a wall wholly over the top goes.
