@@ -40,6 +40,7 @@
 #include "libslic3r/ExPolygon.hpp"
 #include "libslic3r/ExtrusionEntityCollection.hpp"
 #include "libslic3r/SurfaceCollection.hpp"
+#include "libslic3r/Slicing.hpp"
 
 using namespace Slic3r;
 using namespace Slic3r::Test;
@@ -739,4 +740,65 @@ TEST_CASE("Z contouring follows the surface of each instance as it is turned", "
         CHECK(matched > 100);
         CHECK(lifted > 0);
     }
+}
+
+// A 20 mm cube over a two layer raft, sliced at 0.2 mm, between 0.08 mm and 0.32 mm layers. Over a raft the first
+// object layer is not fixed, so the variable layer height tools may change it.
+static const SlicingParameters& raft_cube_slicing_parameters(Print &print, Model &model)
+{
+    init_print({ TestMesh::cube_20x20x20 }, print, model,
+               { { "raft_layers", "2" }, { "layer_height", "0.2" }, { "initial_layer_print_height", "0.2" },
+                 { "min_layer_height", "0.08" }, { "max_layer_height", "0.32" } });
+    REQUIRE(print.objects().size() == 1);
+    const SlicingParameters &params = print.objects().front()->slicing_parameters();
+    REQUIRE_FALSE(params.first_object_layer_height_fixed());
+    return params;
+}
+
+TEST_CASE("Smoothing keeps the variable layer height of an object over a raft", "[PrintObject]")
+{
+    Print print;
+    Model model;
+    const SlicingParameters &params = raft_cube_slicing_parameters(print, model);
+    // 0.2 mm layers up to 1 mm, then 0.28 mm: smoothing thickens the first layer toward the layers above it.
+    const std::vector<double> profile{ 0., 0.2, 1., 0.2, 1.2, 0.28, 20., 0.28 };
+    const std::vector<double> smoothed = smooth_height_profile(profile, params, HeightProfileSmoothingParams(5, false));
+    REQUIRE(smoothed.size() == profile.size());
+    REQUIRE(std::abs(smoothed[1] - params.first_object_layer_height) > EPSILON);
+
+    // Loading the smoothed profile keeps it, instead of falling back to the profile without variable layers.
+    std::vector<double> loaded = smoothed;
+    PrintObject::update_layer_height_profile(*model.objects.front(), params, loaded);
+    REQUIRE(loaded.size() == smoothed.size());
+    for (size_t i = 0; i < loaded.size(); ++i)
+        CHECK_THAT(loaded[i], Catch::Matchers::WithinAbs(smoothed[i], 1e-12));
+}
+
+TEST_CASE("The variable layer height brush edits the base of an object over a raft", "[PrintObject]")
+{
+    Print print;
+    Model model;
+    const SlicingParameters &params = raft_cube_slicing_parameters(print, model);
+    // A stroke that thickens the layers by up to 0.05 mm around z = 0.4 mm, with a 2 mm band reaching below the object.
+    std::vector<double> profile{ 0., 0.2, 20., 0.2 };
+    adjust_layer_height_profile(*model.objects.front(), params, profile, 0.4, 0.05, 2., LAYER_HEIGHT_EDIT_ACTION_INCREASE);
+
+    REQUIRE(profile.size() > 4);
+    REQUIRE(profile.size() % 2 == 0);
+    // The first point stays at the bottom of the object with its height, and the points above it go up in Z.
+    CHECK_THAT(profile[0], Catch::Matchers::WithinAbs(0., 1e-12));
+    CHECK_THAT(profile[1], Catch::Matchers::WithinAbs(0.2, 1e-9));
+    for (size_t i = 2; i < profile.size(); i += 2) {
+        INFO("point " << i / 2 << " at z = " << profile[i]);
+        CHECK(profile[i] > profile[i - 2]);
+        CHECK(profile[i + 1] >= params.min_layer_height - EPSILON);
+        CHECK(profile[i + 1] <= params.max_layer_height + EPSILON);
+    }
+    CHECK_THAT(profile[profile.size() - 2], Catch::Matchers::WithinAbs(20., 1e-9));
+    // The middle of the stroke takes the whole 0.05 mm.
+    double height_at_stroke = 0.;
+    for (size_t i = 0; i < profile.size(); i += 2)
+        if (std::abs(profile[i] - 0.4) < 0.05)
+            height_at_stroke = profile[i + 1];
+    CHECK_THAT(height_at_stroke, Catch::Matchers::WithinAbs(0.25, 0.005));
 }
