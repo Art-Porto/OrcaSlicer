@@ -3,6 +3,7 @@ name: Build Windows x64 (test)
 # Test-only: builds and tests Windows x64 alone on every push to this branch.
 # Lives on the test branch only and is not part of the pull request.
 on:
+  workflow_dispatch:
   push:
     branches:
       - wtfit-bc-wintest
