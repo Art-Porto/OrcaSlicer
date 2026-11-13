@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <limits>
+#include <set>
 #include <vector>
 #include <utility>
 #include <math.h>
@@ -244,6 +245,46 @@ bool layer_range_follows_variable_layer_height(const ModelConfig &range_config)
 {
     const ConfigOption *opt = range_config.option("range_variable_layer_height");
     return opt != nullptr && opt->getBool();
+}
+
+std::vector<t_layer_height_range> edited_layer_ranges(
+    const std::vector<t_layer_height_range> &ranges,
+    const t_layer_height_range              &range,
+    const t_layer_height_range              &new_range)
+{
+    const auto touch = [](coordf_t a, coordf_t b) { return std::abs(a - b) < EPSILON; };
+    // The ranges stacked on its top, each one starting where the one under it ends.
+    std::vector<bool> stacked(ranges.size(), false);
+    for (coordf_t top = range.second;;) {
+        size_t i = 0;
+        while (i < ranges.size() && (stacked[i] || ranges[i] == range || !touch(ranges[i].first, top)))
+            ++i;
+        if (i == ranges.size())
+            break;
+        stacked[i] = true;
+        top        = ranges[i].second;
+    }
+
+    const coordf_t shift        = new_range.second - range.second;
+    const bool     bottom_moved = !touch(new_range.first, range.first);
+    std::vector<t_layer_height_range> edited;
+    std::set<t_layer_height_range>    taken;
+    for (size_t i = 0; i < ranges.size(); ++i) {
+        t_layer_height_range r = ranges[i];
+        if (r == range)
+            r = new_range;
+        else if (stacked[i])
+            r = { r.first + shift, r.second + shift };
+        else if (bottom_moved && touch(r.second, range.first)) {
+            if (new_range.first <= r.first + EPSILON)
+                return {};
+            r.second = new_range.first;
+        }
+        if (!taken.insert(r).second)
+            return {};
+        edited.push_back(r);
+    }
+    return edited;
 }
 
 // Convert layer_config_ranges to layer_height_profile. Both are referenced to z=0, meaning the raft layers are not accounted for

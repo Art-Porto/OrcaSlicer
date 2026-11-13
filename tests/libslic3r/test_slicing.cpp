@@ -127,3 +127,54 @@ TEST_CASE("The layer height texture is filled up to the top of an object whose l
         CHECK(int(data1[(size_t(row) * cols1 + col) * 4 + 3]) == 255);
     }
 }
+
+static void check_ranges(const std::vector<t_layer_height_range> &ranges, const std::vector<t_layer_height_range> &expected)
+{
+    REQUIRE(ranges.size() == expected.size());
+    for (size_t i = 0; i < expected.size(); ++i) {
+        INFO("range " << i);
+        CHECK_THAT(ranges[i].first, Catch::Matchers::WithinAbs(expected[i].first, 1e-9));
+        CHECK_THAT(ranges[i].second, Catch::Matchers::WithinAbs(expected[i].second, 1e-9));
+    }
+}
+
+TEST_CASE("The height ranges stacked on an edited range move with its top", "[Slicing]")
+{
+    // Five 2 mm ranges stacked from 0 to 10 mm, and one on its own at 20 mm.
+    const std::vector<t_layer_height_range> ranges = { { 0., 2. }, { 2., 4. }, { 4., 6. }, { 6., 8. }, { 8., 10. }, { 20., 22. } };
+
+    SECTION("raising the top of the first range by 3 mm raises the four above it by 3 mm")
+    {
+        check_ranges(edited_layer_ranges(ranges, { 0., 2. }, { 0., 5. }),
+                     { { 0., 5. }, { 5., 7. }, { 7., 9. }, { 9., 11. }, { 11., 13. }, { 20., 22. } });
+    }
+    SECTION("lowering the top of the third range by 1 mm lowers the two above it by 1 mm")
+    {
+        check_ranges(edited_layer_ranges(ranges, { 4., 6. }, { 4., 5. }),
+                     { { 0., 2. }, { 2., 4. }, { 4., 5. }, { 5., 7. }, { 7., 9. }, { 20., 22. } });
+    }
+}
+
+TEST_CASE("The height range below an edited range ends where it now starts", "[Slicing]")
+{
+    const std::vector<t_layer_height_range> ranges = { { 0., 2. }, { 2., 4. }, { 4., 6. } };
+
+    SECTION("raising the bottom of the second range to 3 mm")
+    {
+        check_ranges(edited_layer_ranges(ranges, { 2., 4. }, { 3., 4. }), { { 0., 3. }, { 3., 4. }, { 4., 6. } });
+    }
+    SECTION("lowering the bottom of the second range to 1 mm")
+    {
+        check_ranges(edited_layer_ranges(ranges, { 2., 4. }, { 1., 4. }), { { 0., 1. }, { 1., 4. }, { 4., 6. } });
+    }
+}
+
+TEST_CASE("An edit that would empty a height range or repeat one is refused", "[Slicing]")
+{
+    const std::vector<t_layer_height_range> ranges = { { 0., 2. }, { 2., 4. }, { 5., 7. } };
+
+    // The range below the second one would go from 0 to 0 mm.
+    CHECK(edited_layer_ranges(ranges, { 2., 4. }, { 0., 4. }).empty());
+    // Moving the first range onto the third, which does not touch it, gives two ranges the same ends.
+    CHECK(edited_layer_ranges(ranges, { 0., 2. }, { 5., 7. }).empty());
+}

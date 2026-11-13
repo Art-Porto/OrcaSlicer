@@ -91,8 +91,11 @@ wxSizer* ObjectLayers::create_layer(const t_layer_height_range& range, PlusMinus
         // change selectable range for new one, if enter was pressed or if same range was selected
         if (enter_pressed || m_selectable_range == range)
             m_selectable_range = new_range;
-        if (enter_pressed)
+        if (enter_pressed) {
             m_selection_type = type;
+            // Orca: selecting the ranges again hides the plane of the edited end; show it at its new height.
+            wxGetApp().CallAfter([this]() { update_scene_from_editor_selection(); });
+        }
     };
 
     // Add text
@@ -118,13 +121,15 @@ wxSizer* ObjectLayers::create_layer(const t_layer_height_range& range, PlusMinus
         // data for next focusing
         coordf_t max_z = min_z < range.second ? range.second : min_z + 0.5;
         const t_layer_height_range new_range = { min_z, max_z };
+        // Orca: refused when the range below would have no height left.
+        if (!wxGetApp().obj_list()->edit_layer_range(range, new_range, dont_update_ui))
+            return false;
         if (delete_button)
             delete_button->range = new_range;
         if (add_button)
             add_button->range = new_range;
         update_focus_data(new_range, etMinZ, enter_pressed);
-
-        return wxGetApp().obj_list()->edit_layer_range(range, new_range, dont_update_ui);
+        return true;
     });
 
     select_editor(editor, is_last_edited_range);
@@ -148,13 +153,14 @@ wxSizer* ObjectLayers::create_layer(const t_layer_height_range& range, PlusMinus
 
         // data for next focusing
         const t_layer_height_range& new_range = { range.first, max_z };
+        if (!wxGetApp().obj_list()->edit_layer_range(range, new_range, dont_update_ui))
+            return false;
         if (delete_button)
             delete_button->range = new_range;
         if (add_button)
             add_button->range = new_range;
         update_focus_data(new_range, etMaxZ, enter_pressed);
-
-        return wxGetApp().obj_list()->edit_layer_range(range, new_range, dont_update_ui);
+        return true;
     });
 
     //select_editor(editor, is_last_edited_range);
@@ -264,6 +270,18 @@ void ObjectLayers::update_scene_from_editor_selection() const
 {
     // needed to show the visual hints in 3D scene
     wxGetApp().plater()->canvas3D()->handle_layers_data_focus_event(m_selectable_range, m_selection_type);
+}
+
+void ObjectLayers::preview_selected_range_end(coordf_t z) const
+{
+    t_layer_height_range range = m_selectable_range;
+    if (m_selection_type == etMinZ)
+        range.first = z;
+    else if (m_selection_type == etMaxZ)
+        range.second = z;
+    else
+        return;
+    wxGetApp().plater()->canvas3D()->handle_layers_data_focus_event(range, m_selection_type);
 }
 
 void ObjectLayers::UpdateAndShow(const bool show)
@@ -377,7 +395,16 @@ LayerRangeEditor::LayerRangeEditor( ObjectLayers* parent,
     wxTextCtrl* ctrl = GetTextCtrl();
 
     // Reset m_enter_pressed flag to _false_, when value is editing
-    ctrl->Bind(wxEVT_TEXT, [this](wxEvent&) { m_enter_pressed = false; }, ctrl->GetId());
+    ctrl->Bind(wxEVT_TEXT, [this, parent, ctrl](wxEvent&) {
+        m_enter_pressed = false;
+        // Orca: the plane of this end follows the height as it is typed, before it is applied.
+        wxString typed = GetValue();
+        const bool point = is_decimal_separator_point();
+        typed.Replace(point ? ',' : '.', point ? '.' : ',', false);
+        double z;
+        if (ctrl->HasFocus() && typed.ToDouble(&z) && z >= 0.)
+            parent->preview_selected_range_end(z);
+    }, ctrl->GetId());
     
     ctrl->Bind(wxEVT_TEXT_ENTER, [this, edit_fn](wxCommandEvent& e)
     {

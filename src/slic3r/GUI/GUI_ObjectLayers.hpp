@@ -101,6 +101,8 @@ public:
     void        update_layers_list();
 
     void        update_scene_from_editor_selection() const;
+    // Shows the plane of the focused end of a range at height z, which is typed but not applied yet.
+    void        preview_selected_range_end(coordf_t z) const;
 
     void        UpdateAndShow(const bool show) override;
     void        msw_rescale();
