@@ -2117,6 +2117,13 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         return;
     }
 
+    // A new default moves the tower of every plate there, as selecting a printer does.
+    if (m_type == Preset::TYPE_PRINTER && (opt_key == "wipe_tower_custom_default_position" || opt_key == "wipe_tower_default_position")) {
+        PartPlateList &plates = wxGetApp().plater()->get_partplate_list();
+        for (int plate_id = 0; plate_id < plates.get_plate_count(); ++plate_id)
+            plates.set_default_wipe_tower_pos_for_plate(plate_id);
+    }
+
     // The bed-area point option cannot store collision-volume syntax. Offer to
     // copy it to the volume setting while retaining the area's previous value.
     if (opt_key == "bed_exclude_area" && m_type == Preset::TYPE_PRINTER) {
@@ -6142,6 +6149,8 @@ if (is_marlin_flavor)
 
         optgroup = page->new_optgroup(L("Wipe tower"), "param_tower");
         optgroup->append_single_option_line("wipe_tower_type", "printer_multimaterial_wipe_tower");
+        optgroup->append_single_option_line("wipe_tower_custom_default_position", "printer_multimaterial_wipe_tower");
+        optgroup->append_single_option_line("wipe_tower_default_position", "printer_multimaterial_wipe_tower");
         optgroup->append_single_option_line("purge_in_prime_tower", "printer_multimaterial_wipe_tower#purge-in-prime-tower");
         optgroup->append_single_option_line("enable_filament_ramming", "printer_multimaterial_wipe_tower#enable-filament-ramming");
         optgroup->append_single_option_line("tool_change_on_wipe_tower", "printer_multimaterial_wipe_tower#tool-change-on-wipe-tower");
@@ -6848,6 +6857,10 @@ void TabPrinter::toggle_options()
         const bool supports_wipe_tower_2 = !is_BBL_printer && m_config->opt_enum<WipeTowerType>("wipe_tower_type") == WipeTowerType::Type2;
         toggle_line("wipe_tower_type", !is_BBL_printer && !is_belt_printer, -1,
             _L("Wipe tower type selection is unavailable for Bambu Lab printers and belt printers."));
+        toggle_line("wipe_tower_custom_default_position", !is_belt_printer);
+        toggle_line("wipe_tower_default_position", !is_belt_printer);
+        toggle_option("wipe_tower_default_position", m_config->opt_bool("wipe_tower_custom_default_position"), -1,
+            _L("Enable Custom default tower position to use this setting."));
         // SoftFever: hide specific settings for BBL printer
         for (auto el : {
                  "enable_filament_ramming",

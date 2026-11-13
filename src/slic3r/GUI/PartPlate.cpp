@@ -140,13 +140,7 @@ static const int PARTPLATE_TEXT_OFFSET_X2 = 1;
 static const int PARTPLATE_TEXT_OFFSET_Y = 1;
 static const int PARTPLATE_PLATENAME_OFFSET_Y  = 10;
 
-const float WIPE_TOWER_DEFAULT_X_POS = 165.;
-const float WIPE_TOWER_DEFAULT_Y_POS = 250.;  // Max y
-
 const float N9_WIPE_TOWER_DEFAULT_Y_POS = 160.;
-
-const float I3_WIPE_TOWER_DEFAULT_X_POS = 0.;
-const float I3_WIPE_TOWER_DEFAULT_Y_POS = 250.; // Max y
 
 std::array<unsigned char, 4>  PlateTextureForeground = {0x0, 0xae, 0x42, 0xff};
 
@@ -6272,18 +6266,16 @@ void PartPlateList::set_default_wipe_tower_pos_for_plate(int plate_idx, bool ini
     wipe_tower_x->values.resize(m_plate_list.size(), wipe_tower_x->values.front());
     wipe_tower_y->values.resize(m_plate_list.size(), wipe_tower_y->values.front());
 
-    auto printer_structure_opt = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionEnum<PrinterStructure>>("printer_structure");
-    // set the default position, the same with print config(left top)
-    float x = WIPE_TOWER_DEFAULT_X_POS;
-    float y = WIPE_TOWER_DEFAULT_Y_POS;
-    if (printer_structure_opt && printer_structure_opt->value == PrinterStructure::psI3) {
-        x = I3_WIPE_TOWER_DEFAULT_X_POS;
-        y = I3_WIPE_TOWER_DEFAULT_Y_POS;
-    }
+    const DynamicPrintConfig &printer_config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    const Vec2d               default_pos    = default_wipe_tower_position(printer_config);
+    float x = float(default_pos.x());
+    float y = float(default_pos.y());
 
     std::string printer_type = wxGetApp().preset_bundle->printers.get_edited_preset().get_printer_type(wxGetApp().preset_bundle);
-    // Note: printer_type == "N9" and printer_structure_opt->value == PrinterStructure::psI3 can both be true
-    if (printer_type == "N9") {
+    // Note: printer_type == "N9" and the i3 structure can both be true. A position the printer sets
+    // itself is left as it is.
+    const auto *custom_default = printer_config.option<ConfigOptionBool>("wipe_tower_custom_default_position");
+    if (printer_type == "N9" && (custom_default == nullptr || !custom_default->value)) {
         y = N9_WIPE_TOWER_DEFAULT_Y_POS;
     }
 

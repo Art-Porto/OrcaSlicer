@@ -7171,6 +7171,18 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionEnum<WipeTowerType>(WipeTowerType::Type2));
 
+    def = this->add("wipe_tower_custom_default_position", coBool);
+    def->label = L("Custom default tower position");
+    def->tooltip = L("Place the prime tower of a new plate at the default tower position below, instead of the position built in for this kind of printer.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("wipe_tower_default_position", coPoint);
+    def->label = L("Default tower position");
+    def->tooltip = L("Front left corner of the prime tower on a new plate. The tower is kept a few millimeters inside the bed, so a value past an edge places it against that edge.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionPoint(Vec2d(165., 250.)));
+
     def = this->add("purge_in_prime_tower", coBool);
     def->label = L("Purge in prime tower");
     def->tooltip = L("Purge remaining filament into prime tower.");

@@ -59,6 +59,19 @@ bool prime_tower_is_printed(const ConfigBase &config, int used_filaments, int nu
     return !((used_filaments == 1 && !has_mixed_filament) || (by_object && num_objects > 1));
 }
 
+Vec2d default_wipe_tower_position(const ConfigBase &config)
+{
+    const ConfigOption *custom = option_of(config, "wipe_tower_custom_default_position");
+    if (custom != nullptr && custom->getBool())
+        if (const auto *position = dynamic_cast<const ConfigOptionPoint *>(option_of(config, "wipe_tower_default_position")))
+            return position->value;
+    // The back of the bed: at its left edge on a bed slinger, right of center on the rest.
+    const ConfigOption *structure = option_of(config, "printer_structure");
+    if (structure != nullptr && structure->getInt() == int(PrinterStructure::psI3))
+        return Vec2d(0., 250.);
+    return Vec2d(165., 250.);
+}
+
 WipeTowerType resolve_wipe_tower_type(const ConfigBase &config)
 {
     // printer_model is what the CLI keys its Bambu Lab detection on; the GUI's vendor flag

@@ -348,6 +348,36 @@ TEST_CASE("A Bambu Lab printer always gets the Type1 planner", "[WipeTowerEstima
     CHECK(resolve_wipe_tower_type(config) == WipeTowerType::Type2);
 }
 
+static void check_position(const Vec2d &position, double x, double y)
+{
+    CHECK_THAT(position.x(), WithinAbs(x, 1e-9));
+    CHECK_THAT(position.y(), WithinAbs(y, 1e-9));
+}
+
+TEST_CASE("A new plate puts the tower where the printer sets it, else where its structure does", "[WipeTowerEstimate]") {
+    DynamicPrintConfig config = make_config();
+    config.set_deserialize_strict({ { "printer_structure", "corexy" },
+                                    { "wipe_tower_default_position", "0x260" } });
+
+    SECTION("the built-in position while the printer's own is off") {
+        config.set_key_value("wipe_tower_custom_default_position", new ConfigOptionBool(false));
+        check_position(default_wipe_tower_position(config), 165., 250.);
+        config.set_deserialize_strict("printer_structure", "i3");
+        check_position(default_wipe_tower_position(config), 0., 250.);
+    }
+    SECTION("the printer's own position, whatever its structure") {
+        config.set_key_value("wipe_tower_custom_default_position", new ConfigOptionBool(true));
+        check_position(default_wipe_tower_position(config), 0., 260.);
+        config.set_deserialize_strict("printer_structure", "i3");
+        check_position(default_wipe_tower_position(config), 0., 260.);
+    }
+    SECTION("the built-in position for a config without the new keys, as an older project has") {
+        config.erase("wipe_tower_custom_default_position");
+        config.erase("wipe_tower_default_position");
+        check_position(default_wipe_tower_position(config), 165., 250.);
+    }
+}
+
 TEST_CASE("A dual nozzle purges every filament plus the filament change", "[WipeTowerEstimate]") {
     DynamicPrintConfig config = make_config();
     config.set_key_value("nozzle_diameter", new ConfigOptionFloats({0.4, 0.4}));

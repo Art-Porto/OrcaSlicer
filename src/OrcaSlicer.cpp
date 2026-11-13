@@ -5461,7 +5461,6 @@ int CLI::run(int argc, char **argv)
                     //prepare the wipe tower
                     int plate_count = partplate_list.get_plate_count();
 
-                    auto printer_structure_opt = m_print_config.option<ConfigOptionEnum<PrinterStructure>>("printer_structure");
                     // This margin only pre-adjusts the default away from the near edges;
                     // estimate_wipe_tower_polygon below computes the real clamped position.
                     float tower_brim_width = m_print_config.option<ConfigOptionFloat>("prime_tower_brim_width", true)->value;
@@ -5469,12 +5468,9 @@ int CLI::run(int argc, char **argv)
                     const float tower_margin = WIPE_TOWER_MARGIN + tower_brim_width;
 
                     // set the default position, the same with print config(left top)
-                    float x = WIPE_TOWER_DEFAULT_X_POS;
-                    float y = WIPE_TOWER_DEFAULT_Y_POS;
-                    if (printer_structure_opt && printer_structure_opt->value == PrinterStructure::psI3) {
-                        x = I3_WIPE_TOWER_DEFAULT_X_POS;
-                        y = I3_WIPE_TOWER_DEFAULT_Y_POS;
-                    }
+                    const Vec2d default_pos = default_wipe_tower_position(m_print_config);
+                    float x = float(default_pos.x());
+                    float y = float(default_pos.y());
                     if (x < tower_margin) {
                         x = tower_margin;
                     }
@@ -5613,14 +5609,10 @@ int CLI::run(int argc, char **argv)
                 if (!is_belt_printer && !is_seq_print && (assemble_plate.filaments_count > 1) && !has_wipe_tower_position)
                 {
                     //prepare the wipe tower
-                    auto printer_structure_opt = m_print_config.option<ConfigOptionEnum<PrinterStructure>>("printer_structure");
                     // set the default position, the same with print config(left top)
-                    float x = WIPE_TOWER_DEFAULT_X_POS;
-                    float y = WIPE_TOWER_DEFAULT_Y_POS;
-                    if (printer_structure_opt && printer_structure_opt->value == PrinterStructure::psI3) {
-                        x = I3_WIPE_TOWER_DEFAULT_X_POS;
-                        y = I3_WIPE_TOWER_DEFAULT_Y_POS;
-                    }
+                    const Vec2d default_pos = default_wipe_tower_position(m_print_config);
+                    float x = float(default_pos.x());
+                    float y = float(default_pos.y());
                     if (x < WIPE_TOWER_MARGIN) {
                         x = WIPE_TOWER_MARGIN;
                     }
@@ -5781,19 +5773,15 @@ int CLI::run(int argc, char **argv)
                     if (!is_belt_printer && plate_needs_wipe_tower(max_filament_count))
                     {
                         //prepare the wipe tower
-                        auto printer_structure_opt = m_print_config.option<ConfigOptionEnum<PrinterStructure>>("printer_structure");
                         // This margin only pre-adjusts the default away from the near edges;
                         // estimate_wipe_tower_polygon below computes the real clamped position.
                         float tower_brim_width = m_print_config.option<ConfigOptionFloat>("prime_tower_brim_width", true)->value;
                         if (tower_brim_width < 0.f) tower_brim_width = 8.f; // auto: object heights unknown here, 8 mm is the auto cap
                         const float tower_margin          = WIPE_TOWER_MARGIN + tower_brim_width;
                         // set the default position, the same with print config(left top)
-                        float x = WIPE_TOWER_DEFAULT_X_POS;
-                        float y = WIPE_TOWER_DEFAULT_Y_POS;
-                        if (printer_structure_opt && printer_structure_opt->value == PrinterStructure::psI3) {
-                            x = I3_WIPE_TOWER_DEFAULT_X_POS;
-                            y = I3_WIPE_TOWER_DEFAULT_Y_POS;
-                        }
+                        const Vec2d default_pos = default_wipe_tower_position(m_print_config);
+                        float x = float(default_pos.x());
+                        float y = float(default_pos.y());
 
                         if (x < tower_margin) {
                             x = tower_margin;
@@ -5889,13 +5877,9 @@ int CLI::run(int argc, char **argv)
                         float x;
                         float y;
                         if (duplicate_count > 0) {
-                            auto printer_structure_opt = m_print_config.option<ConfigOptionEnum<PrinterStructure>>("printer_structure");
-                            x = WIPE_TOWER_DEFAULT_X_POS;
-                            y = WIPE_TOWER_DEFAULT_Y_POS;
-                            if (printer_structure_opt && printer_structure_opt->value == PrinterStructure::psI3) {
-                                x = I3_WIPE_TOWER_DEFAULT_X_POS;
-                                y = I3_WIPE_TOWER_DEFAULT_Y_POS;
-                            }
+                            const Vec2d default_pos = default_wipe_tower_position(m_print_config);
+                            x = float(default_pos.x());
+                            y = float(default_pos.y());
                         }
                         else {
                             //keep the original
