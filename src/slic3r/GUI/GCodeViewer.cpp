@@ -1721,6 +1721,9 @@ void GCodeViewer::load_as_gcode(const GCodeProcessorResult& gcode_result, const 
             m_contained_in_bed = !m_paths_bounding_box.defined || (bed.contains(m_paths_bounding_box.min) && bed.contains(m_paths_bounding_box.max));
         } else
             m_contained_in_bed = wxGetApp().plater()->build_volume().all_paths_inside(gcode_result, m_paths_bounding_box);
+        // A plate whose paths leave the bed is not ready to print or export: the printer would refuse
+        // the move in the middle of the print.
+        const_cast<GCodeProcessorResult&>(gcode_result).toolpath_outside = !m_contained_in_bed;
     }
 
     m_extruders_count = gcode_result.filaments_count;
