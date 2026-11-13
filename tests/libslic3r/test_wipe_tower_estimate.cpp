@@ -356,8 +356,8 @@ static void check_position(const Vec2d &position, double x, double y)
 
 TEST_CASE("A new plate puts the tower where the printer sets it, else where its structure does", "[WipeTowerEstimate]") {
     DynamicPrintConfig config = make_config();
-    config.set_deserialize_strict({ { "printer_structure", "corexy" },
-                                    { "wipe_tower_default_position", "0x260" } });
+    config.set_deserialize_strict("printer_structure", "corexy");
+    config.set_key_value("wipe_tower_default_position", new ConfigOptionPoint(Vec2d(0., 260.)));
 
     SECTION("the built-in position while the printer's own is off") {
         config.set_key_value("wipe_tower_custom_default_position", new ConfigOptionBool(false));
