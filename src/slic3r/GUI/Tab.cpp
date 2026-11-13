@@ -3799,6 +3799,7 @@ void TabPrintModel::build()
     auto page = add_options_page(L("Frequent"), "empty");
         auto optgroup = page->new_optgroup("");
             optgroup->append_single_option_line("layer_height", "quality_settings_layer_height");
+            optgroup->append_single_option_line("range_variable_layer_height", "quality_settings_layer_height");
             optgroup->append_single_option_line("sparse_infill_density", "strength_settings_infill#sparse-infill-density");
             optgroup->append_single_option_line("wall_loops", "strength_settings_walls#wall-loops");
             optgroup->append_single_option_line("enable_support", "support_settings_support");
@@ -4331,8 +4332,16 @@ void TabPrintPlate::update_custom_dirty(std::vector<std::string> &dirty_options,
     }
 }
 
+// Orca: range_variable_layer_height only means something in the config of a height range.
+static std::vector<std::string> object_tab_keys()
+{
+    std::vector<std::string> keys = concat(PrintObjectConfig().keys(), PrintRegionConfig().keys());
+    keys.erase(std::remove(keys.begin(), keys.end(), "range_variable_layer_height"), keys.end());
+    return keys;
+}
+
 TabPrintObject::TabPrintObject(ParamsPanel* parent) :
-    TabPrintModel(parent, concat(PrintObjectConfig().keys(), PrintRegionConfig().keys()))
+    TabPrintModel(parent, object_tab_keys())
 {
     m_parent_tab = wxGetApp().get_tab(Preset::TYPE_PRINT);
 }
@@ -4359,7 +4368,7 @@ void TabPrintPart::notify_changed(ObjectBase * object)
 
 static std::string layer_height = "layer_height";
 TabPrintLayer::TabPrintLayer(ParamsPanel* parent) :
-    TabPrintModel(parent, concat({ layer_height }, PrintRegionConfig().keys()))
+    TabPrintModel(parent, concat({ layer_height, "range_variable_layer_height" }, PrintRegionConfig().keys()))
 {
     m_parent_tab = wxGetApp().get_model_tab();
 }
