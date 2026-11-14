@@ -2122,6 +2122,8 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         PartPlateList &plates = wxGetApp().plater()->get_partplate_list();
         for (int plate_id = 0; plate_id < plates.get_plate_count(); ++plate_id)
             plates.set_default_wipe_tower_pos_for_plate(plate_id);
+        // The plater redrew the scene when it took the new value, before the towers moved.
+        wxGetApp().plater()->update();
     }
 
     // The bed-area point option cannot store collision-volume syntax. Offer to
