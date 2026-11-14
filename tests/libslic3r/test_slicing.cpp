@@ -138,43 +138,48 @@ static void check_ranges(const std::vector<t_layer_height_range> &ranges, const 
     }
 }
 
-TEST_CASE("The height ranges stacked on an edited range move with its top", "[Slicing]")
+TEST_CASE("The height ranges stacked on a raised top move up with it", "[Slicing]")
 {
     // Five 2 mm ranges stacked from 0 to 10 mm, and one on its own at 20 mm.
     const std::vector<t_layer_height_range> ranges = { { 0., 2. }, { 2., 4. }, { 4., 6. }, { 6., 8. }, { 8., 10. }, { 20., 22. } };
 
-    SECTION("raising the top of the first range by 3 mm raises the four above it by 3 mm")
-    {
-        check_ranges(edited_layer_ranges(ranges, { 0., 2. }, { 0., 5. }),
-                     { { 0., 5. }, { 5., 7. }, { 7., 9. }, { 9., 11. }, { 11., 13. }, { 20., 22. } });
-    }
-    SECTION("lowering the top of the third range by 1 mm lowers the two above it by 1 mm")
-    {
-        check_ranges(edited_layer_ranges(ranges, { 4., 6. }, { 4., 5. }),
-                     { { 0., 2. }, { 2., 4. }, { 4., 5. }, { 5., 7. }, { 7., 9. }, { 20., 22. } });
-    }
+    // Raising the top of the first range by 3 mm raises the four above it by 3 mm, which stay under 20 mm.
+    check_ranges(edited_layer_ranges(ranges, { 0., 2. }, { 0., 5. }),
+                 { { 0., 5. }, { 5., 7. }, { 7., 9. }, { 9., 11. }, { 11., 13. }, { 20., 22. } });
 }
 
-TEST_CASE("The height range below an edited range ends where it now starts", "[Slicing]")
+TEST_CASE("A height range across a gap moves up only as far as a raised top overlaps it", "[Slicing]")
+{
+    const std::vector<t_layer_height_range> ranges = { { 1., 2. }, { 3., 4. }, { 4., 5. }, { 8., 9. } };
+
+    // A top raised to 3.5 mm overlaps the range at 3 mm by 0.5 mm, which pushes the one stacked on it as much.
+    check_ranges(edited_layer_ranges(ranges, { 1., 2. }, { 1., 3.5 }),
+                 { { 1., 3.5 }, { 3.5, 4.5 }, { 4.5, 5.5 }, { 8., 9. } });
+}
+
+TEST_CASE("Lowering a top or moving a bottom leaves the other height ranges where they are", "[Slicing]")
 {
     const std::vector<t_layer_height_range> ranges = { { 0., 2. }, { 2., 4. }, { 4., 6. } };
 
-    SECTION("raising the bottom of the second range to 3 mm")
+    SECTION("lowering the top of the first range opens a gap under the second")
     {
-        check_ranges(edited_layer_ranges(ranges, { 2., 4. }, { 3., 4. }), { { 0., 3. }, { 3., 4. }, { 4., 6. } });
+        check_ranges(edited_layer_ranges(ranges, { 0., 2. }, { 0., 1. }), { { 0., 1. }, { 2., 4. }, { 4., 6. } });
     }
-    SECTION("lowering the bottom of the second range to 1 mm")
+    SECTION("raising the bottom of the second range opens a gap over the first")
     {
-        check_ranges(edited_layer_ranges(ranges, { 2., 4. }, { 1., 4. }), { { 0., 1. }, { 1., 4. }, { 4., 6. } });
+        check_ranges(edited_layer_ranges(ranges, { 2., 4. }, { 3., 4. }), { { 0., 2. }, { 3., 4. }, { 4., 6. } });
+    }
+    SECTION("lowering the bottom of the second range overlaps the first")
+    {
+        check_ranges(edited_layer_ranges(ranges, { 2., 4. }, { 1., 4. }), { { 0., 2. }, { 1., 4. }, { 4., 6. } });
     }
 }
 
-TEST_CASE("An edit that would empty a height range or repeat one is refused", "[Slicing]")
+TEST_CASE("An edit that would repeat a height range is refused", "[Slicing]")
 {
-    const std::vector<t_layer_height_range> ranges = { { 0., 2. }, { 2., 4. }, { 5., 7. } };
+    // The second range was lowered to start with the first, so it starts under the top of the first.
+    const std::vector<t_layer_height_range> ranges = { { 0., 2. }, { 0., 4. } };
 
-    // The range below the second one would go from 0 to 0 mm.
-    CHECK(edited_layer_ranges(ranges, { 2., 4. }, { 0., 4. }).empty());
-    // Moving the first range onto the third, which does not touch it, gives two ranges the same ends.
-    CHECK(edited_layer_ranges(ranges, { 0., 2. }, { 5., 7. }).empty());
+    // Raising the top of the first to 4 mm does not push the second, and gives two ranges the same ends.
+    CHECK(edited_layer_ranges(ranges, { 0., 2. }, { 0., 4. }).empty());
 }

@@ -121,7 +121,7 @@ wxSizer* ObjectLayers::create_layer(const t_layer_height_range& range, PlusMinus
         // data for next focusing
         coordf_t max_z = min_z < range.second ? range.second : min_z + 0.5;
         const t_layer_height_range new_range = { min_z, max_z };
-        // Orca: refused when the range below would have no height left.
+        // Orca: refused when it would give two ranges the same ends.
         if (!wxGetApp().obj_list()->edit_layer_range(range, new_range, dont_update_ui))
             return false;
         if (delete_button)
