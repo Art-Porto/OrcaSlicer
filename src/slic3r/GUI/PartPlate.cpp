@@ -6258,6 +6258,16 @@ void PartPlateList::release_icon_textures()
     }
 }
 
+Vec2d PartPlateList::builtin_wipe_tower_position()
+{
+    const Preset &printer  = wxGetApp().preset_bundle->printers.get_edited_preset();
+    Vec2d         position = Slic3r::builtin_wipe_tower_position(printer.config);
+    // Note: printer_type == "N9" and the i3 structure can both be true.
+    if (printer.get_printer_type(wxGetApp().preset_bundle) == "N9")
+        position.y() = N9_WIPE_TOWER_DEFAULT_Y_POS;
+    return position;
+}
+
 void PartPlateList::set_default_wipe_tower_pos_for_plate(int plate_idx, bool init_pos)
 {
     DynamicConfig &     proj_cfg     = wxGetApp().preset_bundle->project_config;
@@ -6266,18 +6276,10 @@ void PartPlateList::set_default_wipe_tower_pos_for_plate(int plate_idx, bool ini
     wipe_tower_x->values.resize(m_plate_list.size(), wipe_tower_x->values.front());
     wipe_tower_y->values.resize(m_plate_list.size(), wipe_tower_y->values.front());
 
-    const DynamicPrintConfig &printer_config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
-    const Vec2d               default_pos    = default_wipe_tower_position(printer_config);
+    const Vec2d default_pos = default_wipe_tower_position(wxGetApp().preset_bundle->printers.get_edited_preset().config,
+                                                          builtin_wipe_tower_position());
     float x = float(default_pos.x());
     float y = float(default_pos.y());
-
-    std::string printer_type = wxGetApp().preset_bundle->printers.get_edited_preset().get_printer_type(wxGetApp().preset_bundle);
-    // Note: printer_type == "N9" and the i3 structure can both be true. A position the printer sets
-    // itself is left as it is.
-    const auto *custom_default = printer_config.option<ConfigOptionBool>("wipe_tower_custom_default_position");
-    if (printer_type == "N9" && (custom_default == nullptr || !custom_default->value)) {
-        y = N9_WIPE_TOWER_DEFAULT_Y_POS;
-    }
 
     PartPlate *part_plate = get_plate(plate_idx);
     Vec3d plate_origin = part_plate->get_origin();

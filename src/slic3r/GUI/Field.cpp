@@ -2859,22 +2859,48 @@ bool PointCtrl::value_was_changed(wxTextCtrl* win)
 
 void PointCtrl::propagate_input_value(wxTextCtrl* win)
 {
-    if (win->GetValue().empty())
+    // An emptied box is a value when it stands for an automatic coordinate.
+    if (win->GetValue().empty() && !m_auto_value)
         on_kill_focus();
 	else if (value_was_changed(win))
         on_change_field();
+}
+
+static wxString point_coordinate_text(double val)
+{
+	return val - int(val) == 0 ? wxString::Format(_T("%i"), int(val)) : wxNumberFormatter::ToString(val, 2, wxNumberFormatter::Style_None);
 }
 
 void PointCtrl::set_value(const Vec2d& value, bool change_event)
 {
 	m_disable_change_event = !change_event;
 
-	double val = value(0);
-	x_textctrl->SetValue(val - int(val) == 0 ? wxString::Format(_T("%i"), int(val)) : wxNumberFormatter::ToString(val, 2, wxNumberFormatter::Style_None));
-	val = value(1);
-	y_textctrl->SetValue(val - int(val) == 0 ? wxString::Format(_T("%i"), int(val)) : wxNumberFormatter::ToString(val, 2, wxNumberFormatter::Style_None));
+	x_textctrl->SetValue(is_auto_coordinate(0, value(0)) ? wxString() : point_coordinate_text(value(0)));
+	y_textctrl->SetValue(is_auto_coordinate(1, value(1)) ? wxString() : point_coordinate_text(value(1)));
 
 	m_disable_change_event = false;
+}
+
+bool PointCtrl::is_auto_coordinate(int axis, double value) const
+{
+	if (!m_auto_value)
+		return false;
+	const Vec2d default_pt = m_opt.type == coPoints ? m_opt.get_default_value<ConfigOptionPoints>()->values.at(0) :
+	                                                  m_opt.get_default_value<ConfigOptionPoint>()->value;
+	return std::abs(default_pt(axis)) >= 99999. && std::abs(value - default_pt(axis)) < 0.5;
+}
+
+void PointCtrl::set_auto_value(const Vec2d& value)
+{
+	m_auto_value = value;
+	wxTextCtrl* ctrls[] = { x_textctrl, y_textctrl };
+	for (int axis = 0; axis < 2; ++axis) {
+		ctrls[axis]->SetHint(point_coordinate_text(value(axis)));
+		// A coordinate shown before the automatic value was known still reads as its number.
+		double shown;
+		if (ctrls[axis]->GetValue().ToDouble(&shown) && is_auto_coordinate(axis, shown))
+			ctrls[axis]->ChangeValue(wxString());
+	}
 }
 
 void PointCtrl::set_value(const boost::any& value, bool change_event)
@@ -2898,9 +2924,18 @@ void PointCtrl::set_value(const boost::any& value, bool change_event)
 
 boost::any& PointCtrl::get_value()
 {
+	// An empty box of an automatic coordinate reads back as the option's automatic value.
+	const auto read = [this](wxTextCtrl* ctrl, int axis, double& value) {
+		if (m_auto_value && ctrl->GetValue().empty()) {
+			value = m_opt.type == coPoints ? m_opt.get_default_value<ConfigOptionPoints>()->values.at(0)(axis) :
+			                                 m_opt.get_default_value<ConfigOptionPoint>()->value(axis);
+			return is_auto_coordinate(axis, value);
+		}
+		return ctrl->GetValue().ToDouble(&value);
+	};
 	double x, y;
-	if (!x_textctrl->GetValue().ToDouble(&x) ||
-		!y_textctrl->GetValue().ToDouble(&y))
+	if (!read(x_textctrl, 0, x) ||
+		!read(y_textctrl, 1, y))
 	{
 		set_value(m_value.empty() ? Vec2d(0.0, 0.0) : m_value, true);
         show_error(m_parent, _L("Invalid numeric."));

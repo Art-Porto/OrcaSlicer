@@ -28,10 +28,17 @@ struct WipeTowerFootprint
 // the GUI and CLI placement can resolve it without a Print.
 WipeTowerType resolve_wipe_tower_type(const ConfigBase &config);
 
+// A coordinate of wipe_tower_default_position at this value leaves that axis to the built-in position.
+constexpr double WIPE_TOWER_POSITION_AUTO = -99999.;
+
+// The front left corner a new plate gives the tower by the printer's structure: the back of the
+// bed, at its left edge on a bed slinger and right of center on the rest.
+Vec2d builtin_wipe_tower_position(const ConfigBase &config);
+
 // Where a new plate puts the tower's front left corner, before it is kept clear of the bed's
-// edges: the printer's own position when wipe_tower_custom_default_position is on, otherwise the
-// built-in one for its structure. The GUI and the CLI both place from here.
-Vec2d default_wipe_tower_position(const ConfigBase &config);
+// edges: the printer's wipe_tower_default_position on each axis it sets, builtin on the others.
+// The GUI and the CLI both place from here.
+Vec2d default_wipe_tower_position(const ConfigBase &config, const Vec2d &builtin);
 
 // First-layer outline of an estimated tower in tower-local scaled coordinates, brim excluded:
 // the body box, or for a Type2 cone wall the box unioned with the cone's base. The preview,
