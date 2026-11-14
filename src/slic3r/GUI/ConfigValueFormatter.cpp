@@ -1,6 +1,7 @@
 #include "ConfigValueFormatter.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <boost/algorithm/string/erase.hpp>
 #include <cstdlib>
 #include "libslic3r/Point.hpp"
@@ -238,7 +239,16 @@ wxString get_string_value(const std::string& opt_key, const DynamicPrintConfig& 
     }
     case coPoint: {
         Vec2d val = config.opt<ConfigOptionPoint>(pure_key)->value;
-        return from_u8((boost::format("[%1%]") % ConfigOptionPoint(val).serialize()).str());
+        // Orca: a coordinate left automatic, which its box shows empty, reads as Auto rather than as the
+        // out of range value that stands for it, as in wipe_tower_default_position.
+        const ConfigOptionPoint *default_pt = opt->get_default_value<ConfigOptionPoint>();
+        wxString                 axes[2];
+        for (int axis = 0; axis < 2; ++axis) {
+            const bool is_auto = default_pt != nullptr && std::abs(default_pt->value(axis)) >= 99999. &&
+                                 std::abs(val(axis) - default_pt->value(axis)) < 0.5;
+            axes[axis] = is_auto ? _L("Auto") : double_to_string(val(axis));
+        }
+        return "[" + axes[0] + "," + axes[1] + "]";
     }
     case coPoints: {
         //BBS: add bed_exclude_area
