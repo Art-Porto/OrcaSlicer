@@ -252,38 +252,29 @@ std::vector<t_layer_height_range> edited_layer_ranges(
     const t_layer_height_range              &range,
     const t_layer_height_range              &new_range)
 {
-    const auto touch = [](coordf_t a, coordf_t b) { return std::abs(a - b) < EPSILON; };
-    // The ranges stacked on its top, each one starting where the one under it ends.
-    std::vector<bool> stacked(ranges.size(), false);
-    for (coordf_t top = range.second;;) {
-        size_t i = 0;
-        while (i < ranges.size() && (stacked[i] || ranges[i] == range || !touch(ranges[i].first, top)))
-            ++i;
-        if (i == ranges.size())
+    std::vector<t_layer_height_range> edited = ranges;
+    // The ranges that started at or above its top, lowest first.
+    std::vector<size_t> above;
+    for (size_t i = 0; i < edited.size(); ++i) {
+        if (edited[i] == range)
+            edited[i] = new_range;
+        else if (ranges[i].first > range.second - EPSILON)
+            above.push_back(i);
+    }
+    std::sort(above.begin(), above.end(), [&ranges](size_t a, size_t b) { return ranges[a] < ranges[b]; });
+
+    // Each one the raised top now overlaps moves up to start where the one under it ends.
+    coordf_t top = new_range.second;
+    for (size_t i : above) {
+        t_layer_height_range &r = edited[i];
+        if (r.first > top - EPSILON)
             break;
-        stacked[i] = true;
-        top        = ranges[i].second;
+        r   = { top, top + r.second - r.first };
+        top = r.second;
     }
 
-    const coordf_t shift        = new_range.second - range.second;
-    const bool     bottom_moved = !touch(new_range.first, range.first);
-    std::vector<t_layer_height_range> edited;
-    std::set<t_layer_height_range>    taken;
-    for (size_t i = 0; i < ranges.size(); ++i) {
-        t_layer_height_range r = ranges[i];
-        if (r == range)
-            r = new_range;
-        else if (stacked[i])
-            r = { r.first + shift, r.second + shift };
-        else if (bottom_moved && touch(r.second, range.first)) {
-            if (new_range.first <= r.first + EPSILON)
-                return {};
-            r.second = new_range.first;
-        }
-        if (!taken.insert(r).second)
-            return {};
-        edited.push_back(r);
-    }
+    if (std::set<t_layer_height_range>(edited.begin(), edited.end()).size() < edited.size())
+        return {};
     return edited;
 }
 

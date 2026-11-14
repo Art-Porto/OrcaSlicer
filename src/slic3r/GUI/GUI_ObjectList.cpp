@@ -3658,10 +3658,10 @@ DynamicPrintConfig ObjectList::get_default_layer_config(const int obj_idx)
         object(obj_idx)->config.opt_int("extruder") :
         wxGetApp().preset_bundle->prints.get_edited_preset().config.opt_float("extruder");
     config.set_key_value("extruder",    new ConfigOptionInt(0));
-    // Orca: on an object with variable layer heights, a new range leaves its layers to them, so a range
-    // added to change the filament or other settings does not flatten them.
-    if (!object(obj_idx)->layer_height_profile.empty())
-        config.set_key_value("range_variable_layer_height", new ConfigOptionBool(true));
+    // Orca: a new range leaves its layers to the variable layer heights, so a range added to change the
+    // filament or other settings does not flatten them. With no variable layer heights it prints at the
+    // object's layer height.
+    config.set_key_value("range_variable_layer_height", new ConfigOptionBool(true));
 
     return config;
 }
@@ -5045,7 +5045,7 @@ bool ObjectList::edit_layer_range(const t_layer_height_range& range, const t_lay
 
     auto& ranges = object(obj_idx)->layer_config_ranges;
 
-    // Orca: the ranges that touched the edited one move with it, rather than overlapping it or leaving a gap.
+    // Orca: a raised top pushes up the ranges above rather than overlapping them.
     std::vector<t_layer_height_range> old_ends;
     for (const auto& r : ranges)
         old_ends.push_back(r.first);

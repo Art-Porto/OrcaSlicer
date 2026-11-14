@@ -163,9 +163,10 @@ typedef std::map<t_layer_height_range, ModelConfig> t_layer_config_ranges;
 bool layer_range_follows_variable_layer_height(const ModelConfig &range_config);
 
 // Orca: the ends of each height range, in the order given, after one of them is edited from range to
-// new_range. The ranges that touched it keep touching it: the ones stacked on its top move as much as
-// its top does, keeping their thickness, and the one right below ends where it now starts. Empty when
-// that would leave the range below with no height, or two ranges with the same ends.
+// new_range. A top raised into the ranges above pushes them up, keeping their thickness, each one only
+// until it starts where the one under it ends, so the ranges stacked on it move with it. Nothing else
+// moves: a lowered top leaves a gap, and a moved bottom may leave a gap or overlap the range below.
+// Empty when two ranges would have the same ends.
 std::vector<t_layer_height_range> edited_layer_ranges(
     const std::vector<t_layer_height_range> &ranges,
     const t_layer_height_range              &range,
