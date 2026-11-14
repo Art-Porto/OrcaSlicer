@@ -354,27 +354,35 @@ static void check_position(const Vec2d &position, double x, double y)
     CHECK_THAT(position.y(), WithinAbs(y, 1e-9));
 }
 
-TEST_CASE("A new plate puts the tower where the printer sets it, else where its structure does", "[WipeTowerEstimate]") {
+TEST_CASE("A new plate puts the tower where its structure does on each axis the printer leaves automatic", "[WipeTowerEstimate]") {
     DynamicPrintConfig config = make_config();
     config.set_deserialize_strict("printer_structure", "corexy");
-    config.set_key_value("wipe_tower_default_position", new ConfigOptionPoint(Vec2d(0., 260.)));
+    const auto set_own = [&config](double x, double y) {
+        config.set_key_value("wipe_tower_default_position", new ConfigOptionPoint(Vec2d(x, y)));
+    };
 
-    SECTION("the built-in position while the printer's own is off") {
-        config.set_key_value("wipe_tower_custom_default_position", new ConfigOptionBool(false));
-        check_position(default_wipe_tower_position(config), 165., 250.);
+    SECTION("the built-in position: the back of the bed, at its left edge on a bed slinger") {
+        check_position(builtin_wipe_tower_position(config), 165., 250.);
         config.set_deserialize_strict("printer_structure", "i3");
-        check_position(default_wipe_tower_position(config), 0., 250.);
+        check_position(builtin_wipe_tower_position(config), 0., 250.);
     }
-    SECTION("the printer's own position, whatever its structure") {
-        config.set_key_value("wipe_tower_custom_default_position", new ConfigOptionBool(true));
-        check_position(default_wipe_tower_position(config), 0., 260.);
+    SECTION("both axes automatic, as the option's default leaves them") {
+        set_own(WIPE_TOWER_POSITION_AUTO, WIPE_TOWER_POSITION_AUTO);
+        check_position(default_wipe_tower_position(config, builtin_wipe_tower_position(config)), 165., 250.);
+    }
+    SECTION("the printer's own X with an automatic Y") {
+        set_own(0., WIPE_TOWER_POSITION_AUTO);
+        check_position(default_wipe_tower_position(config, builtin_wipe_tower_position(config)), 0., 250.);
+    }
+    SECTION("the printer's own position on both axes, whatever its structure") {
+        set_own(0., 260.);
+        check_position(default_wipe_tower_position(config, builtin_wipe_tower_position(config)), 0., 260.);
         config.set_deserialize_strict("printer_structure", "i3");
-        check_position(default_wipe_tower_position(config), 0., 260.);
+        check_position(default_wipe_tower_position(config, builtin_wipe_tower_position(config)), 0., 260.);
     }
-    SECTION("the built-in position for a config without the new keys, as an older project has") {
-        config.erase("wipe_tower_custom_default_position");
+    SECTION("a config without the option, as an older project has") {
         config.erase("wipe_tower_default_position");
-        check_position(default_wipe_tower_position(config), 165., 250.);
+        check_position(default_wipe_tower_position(config, builtin_wipe_tower_position(config)), 165., 250.);
     }
 }
 

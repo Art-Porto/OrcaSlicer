@@ -5468,7 +5468,7 @@ int CLI::run(int argc, char **argv)
                     const float tower_margin = WIPE_TOWER_MARGIN + tower_brim_width;
 
                     // set the default position, the same with print config(left top)
-                    const Vec2d default_pos = default_wipe_tower_position(m_print_config);
+                    const Vec2d default_pos = default_wipe_tower_position(m_print_config, builtin_wipe_tower_position(m_print_config));
                     float x = float(default_pos.x());
                     float y = float(default_pos.y());
                     if (x < tower_margin) {
@@ -5610,7 +5610,7 @@ int CLI::run(int argc, char **argv)
                 {
                     //prepare the wipe tower
                     // set the default position, the same with print config(left top)
-                    const Vec2d default_pos = default_wipe_tower_position(m_print_config);
+                    const Vec2d default_pos = default_wipe_tower_position(m_print_config, builtin_wipe_tower_position(m_print_config));
                     float x = float(default_pos.x());
                     float y = float(default_pos.y());
                     if (x < WIPE_TOWER_MARGIN) {
@@ -5779,7 +5779,7 @@ int CLI::run(int argc, char **argv)
                         if (tower_brim_width < 0.f) tower_brim_width = 8.f; // auto: object heights unknown here, 8 mm is the auto cap
                         const float tower_margin          = WIPE_TOWER_MARGIN + tower_brim_width;
                         // set the default position, the same with print config(left top)
-                        const Vec2d default_pos = default_wipe_tower_position(m_print_config);
+                        const Vec2d default_pos = default_wipe_tower_position(m_print_config, builtin_wipe_tower_position(m_print_config));
                         float x = float(default_pos.x());
                         float y = float(default_pos.y());
 
@@ -5877,7 +5877,7 @@ int CLI::run(int argc, char **argv)
                         float x;
                         float y;
                         if (duplicate_count > 0) {
-                            const Vec2d default_pos = default_wipe_tower_position(m_print_config);
+                            const Vec2d default_pos = default_wipe_tower_position(m_print_config, builtin_wipe_tower_position(m_print_config));
                             x = float(default_pos.x());
                             y = float(default_pos.y());
                         }

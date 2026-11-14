@@ -59,17 +59,22 @@ bool prime_tower_is_printed(const ConfigBase &config, int used_filaments, int nu
     return !((used_filaments == 1 && !has_mixed_filament) || (by_object && num_objects > 1));
 }
 
-Vec2d default_wipe_tower_position(const ConfigBase &config)
+Vec2d builtin_wipe_tower_position(const ConfigBase &config)
 {
-    const ConfigOption *custom = option_of(config, "wipe_tower_custom_default_position");
-    if (custom != nullptr && custom->getBool())
-        if (const auto *position = dynamic_cast<const ConfigOptionPoint *>(option_of(config, "wipe_tower_default_position")))
-            return position->value;
-    // The back of the bed: at its left edge on a bed slinger, right of center on the rest.
     const ConfigOption *structure = option_of(config, "printer_structure");
     if (structure != nullptr && structure->getInt() == int(PrinterStructure::psI3))
         return Vec2d(0., 250.);
     return Vec2d(165., 250.);
+}
+
+Vec2d default_wipe_tower_position(const ConfigBase &config, const Vec2d &builtin)
+{
+    Vec2d position = builtin;
+    if (const auto *own = dynamic_cast<const ConfigOptionPoint *>(option_of(config, "wipe_tower_default_position")))
+        for (int axis = 0; axis < 2; ++axis)
+            if (own->value(axis) > WIPE_TOWER_POSITION_AUTO + 0.5)
+                position(axis) = own->value(axis);
+    return position;
 }
 
 WipeTowerType resolve_wipe_tower_type(const ConfigBase &config)

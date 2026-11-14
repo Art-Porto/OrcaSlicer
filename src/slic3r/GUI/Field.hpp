@@ -654,6 +654,9 @@ public:
 	void			set_value(const Vec2d& value, bool change_event = false);
 	void			set_value(const boost::any& value, bool change_event = false) override;
 	boost::any&		get_value() override;
+	// For an option whose default leaves a coordinate automatic (-99999 or 99999): shows that
+	// coordinate as an empty box with value in grey, and reads an empty box back as automatic.
+	void			set_auto_value(const Vec2d& value);
 
     void            msw_rescale() override;
 	void            sys_color_changed() override;
@@ -666,6 +669,10 @@ public:
 		y_textctrl->Disable(); }
 	wxSizer*		getSizer() override { return sizer; }
 	wxWindow*		getWindow() override { return window; }
+
+private:
+	bool			is_auto_coordinate(int axis, double value) const;
+	std::optional<Vec2d> m_auto_value;
 };
 
 class StaticText : public Field {
