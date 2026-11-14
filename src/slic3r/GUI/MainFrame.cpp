@@ -2595,9 +2595,11 @@ bool MainFrame::get_enable_print_status()
         }
         enable = enable && !is_all_plates;
     }
+    // Orca: a printer with a print host checks the plate as Print plate does, so a plate whose G-code
+    // leaves the bed is not exported or sent through the host either, as File > Export already refuses it.
     else if (m_print_select == eExportGcode)
     {
-        if (!current_plate->is_slice_result_valid())
+        if (!current_plate->is_slice_result_ready_for_print())
         {
             enable = false;
         }
@@ -2605,7 +2607,7 @@ bool MainFrame::get_enable_print_status()
     }
     else if (m_print_select == eSendGcode)
     {
-        if (!current_plate->is_slice_result_valid())
+        if (!current_plate->is_slice_result_ready_for_print())
             enable = false;
         if (!can_send_gcode())
             enable = false;
@@ -2613,7 +2615,7 @@ bool MainFrame::get_enable_print_status()
     }
     else if (m_print_select == eUploadGcode)
     {
-        if (!current_plate->is_slice_result_valid())
+        if (!current_plate->is_slice_result_ready_for_print())
             enable = false;
         if (!can_send_gcode())
             enable = false;
