@@ -6260,7 +6260,7 @@ void PartPlateList::release_icon_textures()
 
 Vec2d PartPlateList::builtin_wipe_tower_position()
 {
-    const Preset &printer  = wxGetApp().preset_bundle->printers.get_edited_preset();
+    Preset &printer  = wxGetApp().preset_bundle->printers.get_edited_preset();
     Vec2d         position = Slic3r::builtin_wipe_tower_position(printer.config);
     // Note: printer_type == "N9" and the i3 structure can both be true.
     if (printer.get_printer_type(wxGetApp().preset_bundle) == "N9")
