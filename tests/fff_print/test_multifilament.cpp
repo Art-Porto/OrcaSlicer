@@ -2393,7 +2393,8 @@ TEST_CASE("Custom M104 in filament start G-code wins on a T0-only print", "[Mult
 
 // Two tools without a prime tower, the outer wall on the second, so every layer changes tools over the cube.
 // Arc fitting is off, so a spiral lift is written as short G1 moves that climb while moving in XY. At 1.5 mm
-// z hop and a 1 degree travel slope, a spiral is 27 mm across.
+// z hop and a 1 degree travel slope, a spiral is 27 mm across. A spiral that would leave the printable area
+// is drawn as a normal lift, so the cube sits in the middle of a 200 mm bed.
 TEST_CASE("A tool change without a prime tower lifts as the z hop type says", "[MultiFilament]")
 {
     const auto [z_hop_type, spirals] = GENERATE(table<std::string, bool>({
@@ -2412,10 +2413,14 @@ TEST_CASE("A tool change without a prime tower lifts as the z hop type says", "[
         { "z_hop",                          1.5 },
         { "travel_slope",                   1 },
         { "z_hop_types",                    z_hop_type },
+        { "printable_area",                 "0x0,200x0,200x200,0x200" },
     });
+    std::vector<TriangleMesh> meshes;
+    meshes.push_back(cube(10));
+    meshes.back().translate(95, 95, 0);
     Print print;
     Model model;
-    init_print({ cube(10) }, print, model, config);
+    init_print(std::move(meshes), print, model, config, nullptr, /*arrange=*/false);
     const std::string out = gcode(print);
 
     // Looks at the moves from the last extrusion to each change_filament_gcode: the retract and the lift.
