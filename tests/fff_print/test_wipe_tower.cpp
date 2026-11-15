@@ -1179,8 +1179,8 @@ TEST_CASE("Without sparse layers the filament change starts at the tallest print
     }
 }
 
-// A type 2 tower toolchange on two tools with a 0.4 mm z hop. Arc fitting is off, so a spiral
-// lift is written as short G1 moves that climb while moving in XY.
+// A type 2 tower toolchange on two tools with a 0.4 mm spiral z hop. Arc fitting is off, so a
+// spiral lift is written as short G1 moves that climb while moving in XY.
 static std::string slice_type2_toolchange(bool multitool_ramming)
 {
     DynamicPrintConfig config = wipe_tower_toolchange_config("klipper");
@@ -1189,7 +1189,7 @@ static std::string slice_type2_toolchange(bool multitool_ramming)
                                     { "filament_multitool_ramming",     multitool_ramming ? "1" : "0" },
                                     { "enable_arc_fitting",             "disabled" },
                                     { "z_hop",                          "0.4" },
-                                    { "z_hop_types",                    "Normal Lift" } });
+                                    { "z_hop_types",                    "Spiral Lift" } });
     return slice_with_prime_tower(config);
 }
 

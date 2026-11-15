@@ -2390,3 +2390,53 @@ TEST_CASE("Custom M104 in filament start G-code wins on a T0-only print", "[Mult
     CHECK(temps_after_t0.front() == slicer_temp);
     CHECK(temps_after_t0.back() == custom_temp);
 }
+
+// Two tools without a prime tower, the outer wall on the second, so every layer changes tools over the cube.
+// Arc fitting is off, so a spiral lift is written as short G1 moves that climb while moving in XY. At 1.5 mm
+// z hop and a 1 degree travel slope, a spiral is 27 mm across.
+TEST_CASE("A tool change without a prime tower lifts as the z hop type says", "[MultiFilament]")
+{
+    const auto [z_hop_type, spirals] = GENERATE(table<std::string, bool>({
+        { "Normal Lift", false },
+        { "Slope Lift", false }, // a slope needs a travel, so the lift in place is straight
+        { "Spiral Lift", true },
+        { "Auto Lift", true },
+    }));
+    INFO("z_hop_types = " << z_hop_type);
+    const DynamicPrintConfig config = multifilament_config(2, {
+        { "outer_wall_filament_id",         2 },
+        { "enable_prime_tower",             false },
+        { "single_extruder_multi_material", false },
+        { "change_filament_gcode",          "; TOOLCHANGE_MARK" },
+        { "enable_arc_fitting",             "disabled" },
+        { "z_hop",                          1.5 },
+        { "travel_slope",                   1 },
+        { "z_hop_types",                    z_hop_type },
+    });
+    Print print;
+    Model model;
+    init_print({ cube(10) }, print, model, config);
+    const std::string out = gcode(print);
+
+    // Looks at the moves from the last extrusion to each change_filament_gcode: the retract and the lift.
+    size_t toolchanges = 0;
+    size_t spiral_lifts = 0;
+    bool climbed_in_xy = false;
+    GCodeReader reader;
+    reader.parse_buffer(out, [&](GCodeReader &self, const GCodeReader::GCodeLine &line) {
+        if (line.raw().find("; TOOLCHANGE_MARK") != std::string::npos) {
+            ++toolchanges;
+            if (climbed_in_xy)
+                ++spiral_lifts;
+            climbed_in_xy = false;
+        } else if (line.extruding(self))
+            climbed_in_xy = false;
+        else if (line.cmd_is("G1") && line.dist_Z(self) > 0.f && line.dist_XY(self) > 0.f)
+            climbed_in_xy = true;
+    });
+    REQUIRE(toolchanges > 0);
+    if (spirals)
+        CHECK(spiral_lifts > 0);
+    else
+        CHECK(spiral_lifts == 0);
+}
