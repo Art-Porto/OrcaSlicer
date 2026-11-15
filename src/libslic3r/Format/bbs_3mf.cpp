@@ -1486,6 +1486,37 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         m_plater_data.clear();
     }
 
+    // Orca: Support wall loops of 0 was auto until -1 took that over, in BambuStudio 2.2 (81933dd) and in OrcaSlicer 2.6.
+    // Without the OrcaSlicer tag, the project comes from BambuStudio, or from an OrcaSlicer older than 2.3.2, which wrote
+    // a BambuStudio 1.x version. A project of an unknown generator is left as it is.
+    static bool tree_support_wall_count_zero_is_auto(const boost::optional<Semver> &orca_version, const boost::optional<Semver> &generator_version)
+    {
+        if (orca_version)
+            return Semver(orca_version->maj(), orca_version->min(), orca_version->patch()) < Semver(2, 6, 0);
+        return generator_version && Semver(generator_version->maj(), generator_version->min(), 0) < Semver(2, 2, 0);
+    }
+
+    template<typename Config> static void tree_support_wall_count_zero_to_auto(Config &config)
+    {
+        if (config.has("tree_support_wall_count") && config.opt_int("tree_support_wall_count") == 0)
+            config.set("tree_support_wall_count", -1);
+    }
+
+    static void tree_support_wall_count_zero_to_auto(DynamicPrintConfig &config, Model &model, std::vector<Preset*> &project_presets)
+    {
+        tree_support_wall_count_zero_to_auto(config);
+        for (ModelObject *object : model.objects) {
+            tree_support_wall_count_zero_to_auto(object->config);
+            for (ModelVolume *volume : object->volumes)
+                tree_support_wall_count_zero_to_auto(volume->config);
+            for (auto &range : object->layer_config_ranges)
+                tree_support_wall_count_zero_to_auto(range.second);
+        }
+        for (Preset *preset : project_presets)
+            if (preset != nullptr)
+                tree_support_wall_count_zero_to_auto(preset->config);
+    }
+
     //BBS: add plate data related logic
         // add backup & restore logic
     bool _BBS_3MF_Importer::load_model_from_file(const std::string& filename, Model& model, PlateDataPtrs& plate_data_list, std::vector<Preset*>& project_presets, DynamicPrintConfig& config,
@@ -1560,6 +1591,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             if (is_orca_3mf)
                 *is_orca_3mf = false;
         }
+        // Orca: a project saved while 0 was auto asked for auto, which is -1 now.
+        if (result && tree_support_wall_count_zero_is_auto(m_orca_slicer_version, m_bambuslicer_generator_version))
+            tree_support_wall_count_zero_to_auto(config, model, project_presets);
         // save for restore
         if (result && m_load_aux && !m_load_restore) {
             save_string_file(model.get_backup_path() + "/origin.txt", filename);

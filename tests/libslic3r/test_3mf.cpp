@@ -765,6 +765,72 @@ TEST_CASE("A project in the 2.4.x layout keeps auto drop off from its build item
     CHECK_FALSE(model.objects.front()->auto_drop);
 }
 
+// Support wall loops of 0 was auto until -1 took that over, in BambuStudio 2.2 and in OrcaSlicer 2.6. A project saved
+// before that loads its 0 as -1, and a newer one keeps 0, which allows infill-only support.
+TEST_CASE("A tree support wall count of 0 loads as -1 only from a project saved while 0 was auto", "[3mf][Regression]")
+{
+    // An empty OrcaSlicer version leaves the tag out, as BambuStudio and OrcaSlicer before 2.3.2 do.
+    const auto [orca_version, application, expected] = GENERATE(table<std::string, std::string, int>({
+        { "2.5.1",     "BambuStudio-01.10.01.50", -1 },
+        { "2.6.0-dev", "BambuStudio-02.08.01.55", 0 },
+        { "2.6.0",     "BambuStudio-02.08.01.55", 0 },
+        { "",          "BambuStudio-01.10.01.50", -1 },
+        { "",          "BambuStudio-02.01.01.52", -1 },
+        { "",          "BambuStudio-02.02.00.60", 0 },
+    }));
+    INFO("OrcaSlicer \"" << orca_version << "\", " << application);
+
+    ScopedTemporaryFile temp(".3mf");
+    const std::string   path = temp.string();
+    {
+        Model        model;
+        ModelObject* object = model.add_object();
+        object->add_volume(make_cube(10., 10., 10.));
+        object->add_instance();
+        object->config.set("tree_support_wall_count", 0);
+        ScopedTemporaryDir backup_dir("orca_wall_count_src");
+        model.set_backup_path(backup_dir.string());
+        DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+        config.set("tree_support_wall_count", 0);
+        PlateData   plate;
+        plate.plate_index = 0;
+        StoreParams sp;
+        sp.path     = path.c_str();
+        sp.model    = &model;
+        sp.config   = &config;
+        sp.strategy = SaveStrategy::Zip64 | SaveStrategy::Silence;
+        sp.plate_data_list.push_back(&plate);
+        REQUIRE(store_bbs_3mf(sp));
+    }
+    REQUIRE(rewrite_3mf_entries(path, [orca_version = orca_version, application = application](std::string& name, std::string& data) {
+        if (!boost::algorithm::ends_with(name, "3dmodel.model"))
+            return false;
+        const std::string orca_tag = orca_version.empty() ? std::string() :
+                                                            "<metadata name=\"OrcaSlicer\">" + orca_version + "</metadata>";
+        data = std::regex_replace(data, std::regex("<metadata name=\"OrcaSlicer\">[^<]*</metadata>"), orca_tag);
+        data = std::regex_replace(data, std::regex("<metadata name=\"Application\">[^<]*</metadata>"),
+                                  "<metadata name=\"Application\">" + application + "</metadata>");
+        return true;
+    }));
+
+    ScopedTemporaryDir        backup_dir("orca_wall_count_dst");
+    Model                     model;
+    DynamicPrintConfig        config;
+    ConfigSubstitutionContext ctxt{ ForwardCompatibilitySubstitutionRule::Enable };
+    PlateDataPtrs             plates;
+    std::vector<Preset*>      project_presets;
+    bool                      is_bbl_3mf = false, is_orca_3mf = false;
+    Semver                    file_version;
+    model.set_backup_path(backup_dir.string());
+    const bool loaded = load_bbs_3mf(path.c_str(), &config, &ctxt, &model, &plates, &project_presets, &is_bbl_3mf,
+                                     &is_orca_3mf, &file_version, nullptr, LoadStrategy::LoadModel | LoadStrategy::LoadConfig);
+    release_PlateData_list(plates);
+    REQUIRE(loaded);
+    REQUIRE(model.objects.size() == 1);
+    CHECK(config.opt_int("tree_support_wall_count") == expected);
+    CHECK(model.objects.front()->config.opt_int("tree_support_wall_count") == expected);
+}
+
 TEST_CASE("An object loads up to the component reference budget and fails past it", "[3mf][Regression]")
 {
     // The importer queues at most 100000 component references per object. Every reference besides the
