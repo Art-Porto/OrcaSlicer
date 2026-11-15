@@ -11419,15 +11419,7 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
     std::string change_filament_gcode = m_config.change_filament_gcode.value;
 
     // Move the lift gcode here which is in the change_filament_gcode originally
-    // Orca: lift with the filament's z hop type, Auto meaning spiral, as the travel to the tower does. Without
-    // a tower the head changes tools over the print, and a forced spiral circles over it: 27 mm across at
-    // 1.5 mm z hop and 1 degree travel slope. A slope can't be drawn in place, so it lifts straight up.
-    LiftType toolchange_lift_type = LiftType::SpiralLift;
-    if (m_writer.filament() != nullptr) {
-        const ZHopType z_hop_type = ZHopType(FILAMENT_CONFIG(z_hop_types));
-        toolchange_lift_type = z_hop_type == ZHopType::zhtAuto ? LiftType::SpiralLift : to_lift_type(z_hop_type);
-    }
-    change_filament_gcode = this->retract(false, false, toolchange_lift_type, true) + change_filament_gcode;
+    change_filament_gcode = this->retract(false, false, LiftType::SpiralLift, true) + change_filament_gcode;
 
     std::string toolchange_gcode_parsed;
     //Orca: Ignore change_filament_gcode if is the first call for a tool change and manual_filament_change is enabled
