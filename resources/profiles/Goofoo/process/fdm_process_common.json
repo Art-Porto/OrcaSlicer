@@ -75,7 +75,7 @@
     "bridge_no_support": "0",
     "independent_support_layer_height": "1",
     "tree_support_branch_angle": "30",
-    "tree_support_wall_count": "0",
+    "tree_support_wall_count": "-1",
     "skirt_loops": "2",
     "skirt_distance": "3",
     "skirt_height": "1",

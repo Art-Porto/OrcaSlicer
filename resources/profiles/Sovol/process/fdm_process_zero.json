@@ -30,7 +30,7 @@
 	"top_surface_jerk": "5",
 	"initial_layer_jerk": "5",
 	"travel_jerk": "5",
-	"tree_support_wall_count": "0",
+	"tree_support_wall_count": "-1",
 	"reduce_infill_retraction": "1",
 	"detect_thin_wall": "1",
 	"top_surface_pattern": "monotonic",

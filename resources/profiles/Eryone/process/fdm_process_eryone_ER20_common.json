@@ -193,7 +193,7 @@
 	"tree_support_branch_distance_organic": "5",
 	"tree_support_brim_width": "3",
 	"tree_support_tip_diameter": "0.8",
-	"tree_support_wall_count": "0",
+	"tree_support_wall_count": "-1",
 	"wall_generator": "classic",
 	"wall_infill_order": "inner wall/outer wall/infill",
 	"wall_loops": "2",
