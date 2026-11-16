@@ -810,7 +810,7 @@ static std::vector<TriangleMesh> cube_with_ledge()
 
 // The room past the support: what update_selected_items_inflation() keeps around a supported object, 6 mm for normal
 // support and 12 mm for tree support, less the 1 mm margin the object keeps.
-static double support_room(const std::string &support_type) { return support_type == "tree(auto)" ? 11. : 5.; }
+static double support_room(const std::string &support_type) { return support_type.rfind("tree", 0) == 0 ? 11. : 5.; }
 
 TEST_CASE("Arrange leaves room for support on the side of an overhang only", "[Arrange][Support]")
 {
@@ -855,6 +855,26 @@ TEST_CASE("Arrange leaves room for support under a sharp tail in the air", "[Arr
     const ArrangePolygon ap = support_arrange_poly(std::move(parts), "tree(auto)", { { "support_threshold_angle", "30" } });
     check_support_margin(ap, 1., false);
     check_extent(ap, 0., 30. + 11., 10. - 11., 10. + 11.);
+}
+
+TEST_CASE("Arrange leaves room for support under an enforcer only", "[Arrange][Support]")
+{
+    // A 20 mm cube with a support enforcer volume over its +X half: manual support stands under the enforcer only.
+    const std::string support_type = GENERATE("tree(manual)", "normal(manual)");
+    INFO("support_type = " << support_type);
+    Model        model;
+    ModelObject *object = model.add_object();
+    object->add_volume(make_cube(20., 20., 20.));
+    TriangleMesh enforcer = make_cube(10., 20., 20.);
+    enforcer.translate(15.f, 0.f, 0.f);
+    object->add_volume(std::move(enforcer), ModelVolumeType::SUPPORT_ENFORCER);
+    ModelInstance     *instance = object->add_instance();
+    DynamicPrintConfig config   = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({ { "enable_support", "1" }, { "support_type", support_type } });
+    const ArrangePolygon ap   = get_instance_arrange_poly(instance, config);
+    const double         room = support_room(support_type);
+    check_support_margin(ap, 1., false);
+    check_extent(ap, 0., 25. + room, -room, 20. + room);
 }
 
 TEST_CASE("Arrange gives no support margin to manual support without enforcers", "[Arrange][Support]")
