@@ -837,10 +837,14 @@ TEST_CASE("Arrange leaves room for support under the bottom of a sphere", "[Arra
     sphere.translate(0.f, 0.f, 10.f);
     const ArrangePolygon ap = support_arrange_poly({ std::move(sphere) }, support_type, { { "support_threshold_angle", "30" } });
     check_support_margin(ap, 1., false);
-    const double radius = std::max(10., 5. + support_room(support_type));
+    // The faces of the tessellated sphere flatter than 30 degrees end a little inside that radius, past 4 mm.
+    const double room = support_room(support_type);
+    const double min_width = std::max(20., 2. * (4. + room)) - 0.1, max_width = std::max(20., 2. * (5. + room)) + 0.1;
     const BoundingBox bb = ap.poly.contour.bounding_box();
-    CHECK_THAT(unscaled(bb.size().x()), Catch::Matchers::WithinAbs(2. * radius, 0.5));
-    CHECK_THAT(unscaled(bb.size().y()), Catch::Matchers::WithinAbs(2. * radius, 0.5));
+    for (const coord_t width : { bb.size().x(), bb.size().y() }) {
+        CHECK(unscaled(width) > min_width);
+        CHECK(unscaled(width) < max_width);
+    }
 }
 
 TEST_CASE("Arrange leaves room for support under a sharp tail in the air", "[Arrange][Support]")

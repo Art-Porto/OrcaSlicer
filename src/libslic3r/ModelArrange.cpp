@@ -317,7 +317,9 @@ ArrangePolygon get_instance_arrange_poly(ModelInstance* instance, const Slic3r::
         // own margin.
         const double room   = (tree_support ? 12. : 6.) - ap.brim_width;
         Points       points = std::move(ap.poly.contour.points);
-        for (const Point &pt : Geometry::convex_hull(support.under).points)
+        // Fewer than three points, such as the tip of a sharp tail, have no hull.
+        const Polygon under = Geometry::convex_hull(support.under);
+        for (const Point &pt : under.empty() ? support.under : under.points)
             for (int i = 0; i < 64; ++i) {
                 const double angle = 2. * PI * i / 64;
                 points.emplace_back(pt + Point(scaled(room * std::cos(angle)), scaled(room * std::sin(angle))));
