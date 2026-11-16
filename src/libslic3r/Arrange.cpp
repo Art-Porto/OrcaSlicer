@@ -1347,6 +1347,7 @@ template void arrange(ArrangePolygons &items, const ArrangePolygons &excludes, c
 std::vector<ArrangePolygons> pack_print_groups(ArrangePolygons &selected, const DynamicPrintConfig *print_cfg, const ArrangeParams &params)
 {
     std::vector<ArrangePolygons> groups;
+    return groups; // TEMPORARY nofix
     if (!params.is_seq_print)
         return groups;
 
