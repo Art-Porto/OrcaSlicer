@@ -16,11 +16,6 @@
 #include "BoundingBox.hpp"
 #include "ExPolygon.hpp"
 #include "Polygon.hpp"
-#include "Geometry.hpp"
-#include "TriangleSelector.hpp"
-#include "admesh/stl.h"
-#include <cmath>
-#include <vector>
 
 namespace Slic3r {
 
@@ -137,82 +132,6 @@ arrangement::ArrangePolygon get_arrange_poly(ModelInstance* inst, const Slic3r::
     return get_arrange_poly(PtrWrapper{ inst },config);
 }
 
-// Orca: whether arrange leaves room for this instance's support. Support that is turned on but finds nothing
-// to hold up generates nothing, and its margin would only spread the objects apart. Arranging can't wait for
-// a slice, so this reads the mesh, and keeps the margin whenever it can't tell.
-static bool instance_needs_support(ModelObject &object, const ModelInstance &instance, const DynamicPrintConfig &config, SupportType support_type)
-{
-    const auto object_int = [&](const char *key) {
-        const ConfigOptionInt *opt = object.get_config_value<ConfigOptionInt>(config, key);
-        return opt != nullptr ? opt->value : 0;
-    };
-    // A raft is printed as support, and enforcers and negative volumes add overhangs the parts don't show.
-    if (object_int("raft_layers") > 0)
-        return true;
-    for (const ModelVolume *volume : object.volumes)
-        if (volume->is_support_enforcer() || volume->is_negative_volume() ||
-            (volume->is_model_part() && volume->supported_facets.has_facets(*volume, EnforcerBlockerType::ENFORCER)))
-            return true;
-    // Manual support is only generated on enforcers.
-    if (!is_auto(support_type))
-        return false;
-    // A tilted plate or a belt measures overhangs against another direction.
-    for (const char *key : { "build_plate_tilt_x", "build_plate_tilt_y" })
-        if (const ConfigOptionFloat *tilt = config.option<ConfigOptionFloat>(key); tilt != nullptr && tilt->value != 0.)
-            return true;
-    if (const ConfigOptionBool *belt = config.option<ConfigOptionBool>("belt_printer"); belt != nullptr && belt->value)
-        return true;
-    int threshold_deg = object_int("support_threshold_angle");
-    if (threshold_deg == 0) {
-        // Normal support then goes by the threshold overlap, which no angle stands for. Tree support takes 30 degrees.
-        if (!is_tree(support_type))
-            return true;
-        threshold_deg = 30;
-    }
-    const double cos_threshold = std::cos(Geometry::deg2rad(double(threshold_deg)));
-    // Nothing gets support within the first layer.
-    const ConfigOptionFloat *first_layer = config.option<ConfigOptionFloat>("initial_layer_print_height");
-    const double above_bed = (first_layer != nullptr ? first_layer->value : 0.) + EPSILON;
-
-    for (const ModelVolume *volume : object.volumes) {
-        if (!volume->is_model_part())
-            continue;
-        const Transform3d trafo = instance.get_matrix() * volume->get_matrix();
-        const bool mirrored = trafo.linear().determinant() < 0.;
-        const indexed_triangle_set &its = volume->mesh().its;
-        std::vector<Vec3d> pts(its.vertices.size());
-        for (size_t i = 0; i < pts.size(); ++i)
-            pts[i] = trafo * its.vertices[i].cast<double>();
-        // A vertex of a face looking down, with no neighbor below it, is where an island starts in the air: both
-        // support types hold up such a sharp tail whatever the slope around it.
-        std::vector<bool> has_lower(pts.size(), false), on_face_looking_down(pts.size(), false);
-        for (const stl_triangle_vertex_indices &face : its.indices) {
-            Vec3d normal = (pts[face[1]] - pts[face[0]]).cross(pts[face[2]] - pts[face[0]]);
-            if (mirrored)
-                normal = -normal;
-            const double area2 = normal.norm();
-            if (area2 <= 0.)
-                continue;
-            const double top = std::max({ pts[face[0]].z(), pts[face[1]].z(), pts[face[2]].z() });
-            if (top > above_bed && -normal.z() > cos_threshold * area2)
-                return true; // an overhang flatter than the threshold angle
-            for (int i = 0; i < 3; ++i) {
-                const int a = face[i], b = face[(i + 1) % 3];
-                if (pts[b].z() < pts[a].z() - EPSILON)
-                    has_lower[a] = true;
-                if (pts[a].z() < pts[b].z() - EPSILON)
-                    has_lower[b] = true;
-                if (normal.z() < -EPSILON * area2)
-                    on_face_looking_down[a] = true;
-            }
-        }
-        for (size_t i = 0; i < pts.size(); ++i)
-            if (!has_lower[i] && on_face_looking_down[i] && pts[i].z() > above_bed)
-                return true;
-    }
-    return false;
-}
-
 ArrangePolygon get_instance_arrange_poly(ModelInstance* instance, const Slic3r::DynamicPrintConfig& config)
 {
     ArrangePolygon ap = get_arrange_poly(PtrWrapper{ instance }, config);
@@ -260,15 +179,15 @@ ArrangePolygon get_instance_arrange_poly(ModelInstance* instance, const Slic3r::
     // For by-layer printing, need to shrink bed a little, so the support won't go outside bed.
     // We set it to 5mm because that's how much a normal support will grow by default.
     // normal support 5mm, other support 22mm, no support 0mm
-    // Orca: an object whose support has nothing to hold up gets no support margin.
     auto supp_type_ptr = obj->get_config_value<ConfigOptionBool>(config, "enable_support");
     auto support_type_ptr = obj->get_config_value<ConfigOptionEnum<SupportType>>(config, "support_type");
     auto support_type = support_type_ptr->value;
-    const bool needs_support = supp_type_ptr->getBool() && instance_needs_support(*obj, *instance, config, support_type);
+    auto enable_support = supp_type_ptr->getBool();
+    int support_int = support_type_ptr->getInt();
 
-    if (needs_support && (support_type == stNormalAuto || support_type == stNormal))
+    if (enable_support && (support_type == stNormalAuto || support_type == stNormal))
         ap.brim_width = 6.0;
-    else if (needs_support) {
+    else if (enable_support) {
         ap.brim_width = 24.0; // 2*MAX_BRANCH_RADIUS_FIRST_LAYER
         ap.has_tree_support = true;
     }
