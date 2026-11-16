@@ -171,13 +171,17 @@ void update_selected_items_inflation(ArrangePolygons& selected, const DynamicPri
         else
             params.min_obj_distance = std::max(params.min_obj_distance, scaled(params.clearance_radius + 0.001)); // +0.001mm to avoid clearance check fail due to rounding error
     }
+    double brim_max = 0;
+    bool plate_has_tree_support = false;
+    std::for_each(selected.begin(), selected.end(), [&](ArrangePolygon& ap) {
+        brim_max = std::max(brim_max, ap.brim_width);
+        if (ap.has_tree_support) plate_has_tree_support = true; });
     std::for_each(selected.begin(), selected.end(), [&](ArrangePolygon& ap) {
         // 1. if user input a distance, use it
-        // 2. Orca: an object with tree support keeps a branch's first layer radius around it (its brim width is the
-        //    branch diameter), which keeps the other objects clear of its branches; they keep their own margin
+        // 2. if there is an object with tree support, all objects use the max tree branch radius (brim_max=branch diameter)
         // 3. otherwise, use each object's own brim width
         ap.inflation = params.min_obj_distance != 0 ? params.min_obj_distance / 2 :
-            ap.has_tree_support ? scaled(ap.brim_width / 2) : scaled(ap.brim_width);
+            plate_has_tree_support ? scaled(brim_max / 2) : scaled(ap.brim_width);
         if (params.min_obj_distance != 0)
             return; // an explicit object distance is the user's call, not ours to shrink
         // An item cannot be larger than the printable area, inflation included. Inflating
