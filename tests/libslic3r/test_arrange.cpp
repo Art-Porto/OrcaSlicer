@@ -22,6 +22,9 @@
 #include "libslic3r/Print.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/MultiMaterialSegmentation.hpp"
+#include "libslic3r/Model.hpp"
+#include "libslic3r/ModelArrange.hpp"
+#include "libslic3r/TriangleMesh.hpp"
 
 using namespace Slic3r;
 using namespace Slic3r::arrangement;
@@ -739,4 +742,96 @@ TEST_CASE("Arrange keeps relevant objects outside conditional exclusion obstacle
         CHECK(intersection(ExPolygons{item.transformed_poly()}, ExPolygons{excluded_shape}).empty());
     }
     require_no_overlap(items);
+}
+
+// The arrange polygon of an object made of these parts, standing on the bed, with support turned on.
+static ArrangePolygon support_arrange_poly(std::vector<TriangleMesh> parts, const std::string &support_type,
+                                           std::initializer_list<ConfigBase::SetDeserializeItem> settings = {},
+                                           bool mirrored = false)
+{
+    Model model;
+    ModelObject *object = model.add_object();
+    for (TriangleMesh &part : parts)
+        object->add_volume(std::move(part));
+    ModelInstance *instance = object->add_instance();
+    if (mirrored)
+        instance->set_mirror(Vec3d(-1., 1., 1.));
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({ { "enable_support", "1" }, { "support_type", support_type } });
+    config.set_deserialize_strict(settings);
+    return get_instance_arrange_poly(instance, config);
+}
+
+static std::vector<TriangleMesh> cube_on_bed() { return { make_cube(20., 20., 20.) }; }
+
+// A 20 mm cube with a second block on its top half that sticks out 10 mm sideways: its bottom face, 10 mm
+// above the bed, looks straight down.
+static std::vector<TriangleMesh> cube_with_overhang()
+{
+    TriangleMesh ledge = make_cube(20., 20., 10.);
+    ledge.translate(10.f, 0.f, 10.f);
+    return { make_cube(20., 20., 20.), std::move(ledge) };
+}
+
+// Arrange gives no support margin of 1 mm, 6 mm for normal support and 24 mm for tree support.
+static void check_support_margin(const ArrangePolygon &ap, double margin, bool tree)
+{
+    CHECK_THAT(ap.brim_width, Catch::Matchers::WithinAbs(margin, 1e-9));
+    CHECK(ap.has_tree_support == tree);
+}
+
+TEST_CASE("Arrange gives no support margin to an object with nothing to support", "[Arrange][Support]")
+{
+    const std::string support_type = GENERATE("tree(auto)", "normal(auto)");
+    const bool        mirrored     = GENERATE(false, true);
+    INFO("support_type = " << support_type << ", mirrored = " << mirrored);
+    check_support_margin(support_arrange_poly(cube_on_bed(), support_type, {}, mirrored), 1., false);
+}
+
+TEST_CASE("Arrange keeps the support margin of an object with an overhang", "[Arrange][Support]")
+{
+    const auto [support_type, margin, tree] = GENERATE(table<std::string, double, bool>({
+        { "tree(auto)", 24., true },
+        { "normal(auto)", 6., false },
+    }));
+    const bool mirrored = GENERATE(false, true);
+    INFO("support_type = " << support_type << ", mirrored = " << mirrored);
+    check_support_margin(support_arrange_poly(cube_with_overhang(), support_type, {}, mirrored), margin, tree);
+
+    // A sphere on the bed: the faces near its bottom look down, above the first layer.
+    TriangleMesh sphere = make_sphere(10.);
+    sphere.translate(0.f, 0.f, 10.f);
+    check_support_margin(support_arrange_poly({ std::move(sphere) }, support_type, {}, mirrored), margin, tree);
+}
+
+TEST_CASE("Arrange keeps the support margin of a sharp tail in the air", "[Arrange][Support]")
+{
+    // A steep cone hanging tip down beside the cube, its tip 5 mm above the bed. Its sides are 84 degrees steep,
+    // far past the 30 degree threshold, but the tip starts an island in the air.
+    TriangleMesh cone = make_cone(2., 20.);
+    cone.rotate_x(float(PI));
+    cone.translate(30.f, 10.f, 25.f);
+    std::vector<TriangleMesh> parts = cube_on_bed();
+    parts.push_back(std::move(cone));
+    check_support_margin(support_arrange_poly(std::move(parts), "tree(auto)", { { "support_threshold_angle", "30" } }), 24., true);
+}
+
+TEST_CASE("Arrange gives no support margin to manual support without enforcers", "[Arrange][Support]")
+{
+    const std::string support_type = GENERATE("tree(manual)", "normal(manual)");
+    INFO("support_type = " << support_type);
+    check_support_margin(support_arrange_poly(cube_with_overhang(), support_type), 1., false);
+}
+
+TEST_CASE("Arrange keeps the support margin of an object on a raft", "[Arrange][Support]")
+{
+    check_support_margin(support_arrange_poly(cube_on_bed(), "tree(auto)", { { "raft_layers", "2" } }), 24., true);
+}
+
+TEST_CASE("Arrange keeps the normal support margin when the threshold angle is zero", "[Arrange][Support]")
+{
+    // At 0 degrees normal support goes by the threshold overlap instead, which no angle stands for, while tree
+    // support falls back to 30 degrees.
+    check_support_margin(support_arrange_poly(cube_on_bed(), "normal(auto)", { { "support_threshold_angle", "0" } }), 6., false);
+    check_support_margin(support_arrange_poly(cube_on_bed(), "tree(auto)", { { "support_threshold_angle", "0" } }), 1., false);
 }
