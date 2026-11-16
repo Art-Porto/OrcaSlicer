@@ -835,3 +835,21 @@ TEST_CASE("Arrange keeps the normal support margin when the threshold angle is z
     check_support_margin(support_arrange_poly(cube_on_bed(), "normal(auto)", { { "support_threshold_angle", "0" } }), 6., false);
     check_support_margin(support_arrange_poly(cube_on_bed(), "tree(auto)", { { "support_threshold_angle", "0" } }), 1., false);
 }
+
+TEST_CASE("Arrange keeps the tree support margin around the supported object only", "[Arrange][Support]")
+{
+    // A tree supported object's margin is the branch diameter, half of it on each side, so its neighbors are clear
+    // of its branches. The other objects keep their own 1 mm margin and may stand close to each other.
+    DynamicPrintConfig cfg = bed_config();
+    ArrangeParams      p   = quiet_params();
+    ArrangePolygons items  = squares(3, 20.);
+    for (ArrangePolygon &ap : items)
+        ap.brim_width = 1.;
+    items.front().brim_width       = 24.;
+    items.front().has_tree_support = true;
+    update_arrange_params(p, &cfg, items);
+    update_selected_items_inflation(items, &cfg, p);
+    CHECK(items[0].inflation == scaled(12.));
+    CHECK(items[1].inflation == scaled(1.));
+    CHECK(items[2].inflation == scaled(1.));
+}
