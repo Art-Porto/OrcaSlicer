@@ -1448,6 +1448,7 @@ void unpack_print_groups(ArrangePolygons &selected, std::vector<ArrangePolygons>
 
 bool update_print_group_fill_inflation(ArrangePolygons &selected, ArrangePolygons &unselected, const DynamicPrintConfig *print_cfg, ArrangeParams &params)
 {
+    return false; // TEMPORARY nofix
     if (!params.is_seq_print || selected.empty())
         return false;
     const int print_group = selected.front().print_group;
