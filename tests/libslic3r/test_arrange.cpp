@@ -756,6 +756,7 @@ static DynamicPrintConfig support_config(const std::string &support_type)
                                     { "support_expansion", "0" },
                                     { "raft_first_layer_expansion", "2" },
                                     { "tree_support_branch_diameter_organic", "2" },
+                                    { "tree_support_branch_diameter", "2" },
                                     { "tree_support_branch_diameter_angle", "5" },
                                     { "tree_support_branch_angle_organic", "40" },
                                     { "tree_support_branch_angle", "40" },
@@ -909,15 +910,27 @@ TEST_CASE("Arrange gives no support margin to manual support without enforcers",
     check_support_margin(support_arrange_poly(cube_with_overhang(), support_type), 1., false);
 }
 
+// How far past the outline a tree trunk reaches that comes down beside the object, holding up a point at height z, less
+// the 1 mm margin the object keeps: its middle stands past the 0.35 mm gap by its radius on the bed, and its first layer
+// reaches around it. An organic trunk is 1 mm, half its Branch Diameter, thickened by z * tan(5 degrees), and at least
+// 3.75 mm; its whole first layer, grown by the 2 mm First layer expansion, stays past the gap. A hybrid one thickens from
+// 1 mm by (z - 1 mm) * 5 degrees in radians, and its first layer reaches 12 mm.
+static double room_beside(const std::string &support_style, double z)
+{
+    if (support_style == "tree_hybrid")
+        return 1. + (z - 1.) * 5. * PI / 180. + 0.35 + 12. - 1.;
+    const double reach = std::max(1. + z * std::tan(5. * PI / 180.), 3.75) + 2.;
+    return reach + 0.35 + reach - 1.;
+}
+
 TEST_CASE("Arrange keeps the support margin of an object on a raft", "[Arrange][Support]")
 {
     // A raft is printed as support, so it is kept around the whole object. Normal support reaches 6 mm. A tree trunk
-    // may come down beside the object anywhere, past the 0.35 mm gap: twice its reach at the bed, 3.75 mm and the 2 mm
-    // First layer expansion for an organic one, 12 mm for a hybrid one.
+    // may come down beside the 20 mm cube anywhere, past the 0.35 mm gap, see room_beside().
     struct Raft { std::string support_type, support_style; double margin; bool tree; };
     const Raft raft = GENERATE(Raft{ "normal(auto)", "default", 6., false },
-                               Raft{ "tree(auto)", "default", 2. * (2. * (3.75 + 2.) + 0.35), true },
-                               Raft{ "tree(auto)", "tree_hybrid", 2. * (2. * 12. + 0.35), true });
+                               Raft{ "tree(auto)", "default", 2. * (room_beside("default", 20.) + 1.), true },
+                               Raft{ "tree(auto)", "tree_hybrid", 2. * (room_beside("tree_hybrid", 20.) + 1.), true });
     INFO("support_type = " << raft.support_type << ", support_style = " << raft.support_style);
     check_support_margin(support_arrange_poly(cube_on_bed(), raft.support_type,
                                               { { "raft_layers", "2" }, { "support_style", raft.support_style } }),
@@ -938,7 +951,7 @@ TEST_CASE("Arrange leaves room for support as far as its type and style reach", 
     // Normal support reaches 6 mm, and further by its expansion and by First layer expansion past 2 mm. An organic tree,
     // which tree support's default style prints, thickens toward the bed by its Branch Diameter Angle: from 1 mm, half
     // its Branch Diameter, by 100 mm * tan(5 degrees) under the ledge, and its first layer grows by First layer expansion.
-    // Slim, strong and hybrid branches are 10 mm wide at most, and their first layer gets a brim, 12 mm at most when
+    // Slim, strong and hybrid branches reach 10 mm at most, and their first layer gets a brim, 12 mm at most when
     // automatic. The object keeps its own 1 mm margin.
     const double organic = 1. + 100. * std::tan(5. * PI / 180.);
     struct Reach { std::string support_type, support_style; std::vector<std::pair<std::string, std::string>> settings; double reach; };
@@ -985,18 +998,67 @@ static std::vector<TriangleMesh> cap_over_base()
 TEST_CASE("Arrange leaves room beside the object for tree support over it", "[Arrange][Support]")
 {
     // Normal support stands on the base. A tree branch at 60 mm reaches past the base's edge by its 40 degree Branch
-    // Angle and comes down beside it, its trunk past the 0.35 mm gap: twice its reach at the bed, from the base's edge
-    // nearest to the cap's ends. An organic trunk reaches 1 mm, half its Branch Diameter, by 60 mm * tan(5 degrees),
-    // and the 2 mm First layer expansion, a hybrid one 12 mm. The object keeps its own 1 mm margin.
+    // Angle and comes down beside it, from the base's edge nearest to each of the cap's ends. The ends are as tall, so
+    // each may lead an organic trunk down its own side.
     struct Beside { std::string support_type, support_style; double room; };
-    const double organic = 1. + 60. * std::tan(5. * PI / 180.) + 2.;
-    const Beside b = GENERATE_COPY(Beside{ "normal(auto)", "default", 0. },
-                                   Beside{ "tree(auto)", "default", 2. * organic + 0.35 - 1. },
-                                   Beside{ "tree(auto)", "tree_hybrid", 2. * 12. + 0.35 - 1. });
+    const Beside b = GENERATE(Beside{ "normal(auto)", "default", 0. },
+                              Beside{ "tree(auto)", "default", room_beside("default", 60.) },
+                              Beside{ "tree(auto)", "tree_hybrid", room_beside("tree_hybrid", 60.) });
     INFO("support_type = " << b.support_type << ", support_style = " << b.support_style);
     const ArrangePolygon ap = support_arrange_poly(cap_over_base(), b.support_type, { { "support_style", b.support_style } });
     check_support_margin(ap, 1., false);
     check_extent(ap, -b.room, 40. + b.room, std::min(0., 15. - b.room), std::max(40., 25. + b.room));
+}
+
+// A 40 mm square base 5 mm thick, a 10 mm post in its middle up to 65 mm, and two 10 mm arms on the post over the base,
+// 5 mm in from the base's edges: one toward -X with its bottom at 60 mm, one toward +X with its bottom at 50 mm.
+static std::vector<TriangleMesh> arms_over_base()
+{
+    TriangleMesh post = make_cube(10., 10., 60.);
+    post.translate(15.f, 15.f, 5.f);
+    TriangleMesh high_arm = make_cube(10., 5., 5.);
+    high_arm.translate(5.f, 17.5f, 60.f);
+    TriangleMesh low_arm = make_cube(10., 5., 5.);
+    low_arm.translate(25.f, 17.5f, 50.f);
+    return { make_cube(40., 40., 5.), std::move(post), std::move(high_arm), std::move(low_arm) };
+}
+
+TEST_CASE("Arrange leaves room for one organic trunk on the side of the tallest branch", "[Arrange][Support]")
+{
+    // Both arms' branches reach past the base's edge by their 40 degree Branch Angle, and can meet on the way down.
+    // Organic branches that meet merge into one trunk, which the higher arm's branch leads down on its own side, -X.
+    // Hybrid branches each come down on their own side. The room is for a trunk holding up the higher arm.
+    const std::string support_style = GENERATE("default", "tree_hybrid");
+    INFO("support_style = " << support_style);
+    const ArrangePolygon ap   = support_arrange_poly(arms_over_base(), "tree(auto)", { { "support_style", support_style } });
+    const double         room = room_beside(support_style, 60.);
+    check_support_margin(ap, 1., false);
+    check_extent(ap, -room, support_style == "default" ? 40. : 40. + room, std::min(0., 17.5 - room), std::max(40., 22.5 + room));
+}
+
+TEST_CASE("Arrange leaves room for organic trunks too far apart to merge on both sides", "[Arrange][Support]")
+{
+    // A 200 mm long base, with an arm at 30 mm over it toward -Y near one end and an arm at 25 mm toward +Y near the
+    // other. Their branches reach the base's edges by their 40 degree Branch Angle, 5 mm away, but are 100 mm apart:
+    // too far to meet on the way down, so each comes down as its own trunk on its own side.
+    TriangleMesh left_post = make_cube(10., 10., 30.);
+    left_post.translate(40.f, 15.f, 5.f);
+    TriangleMesh left_arm = make_cube(10., 10., 5.);
+    left_arm.translate(40.f, 5.f, 30.f);
+    TriangleMesh right_post = make_cube(10., 10., 25.);
+    right_post.translate(150.f, 15.f, 5.f);
+    TriangleMesh right_arm = make_cube(10., 10., 5.);
+    right_arm.translate(150.f, 25.f, 25.f);
+    std::vector<TriangleMesh> parts;
+    parts.push_back(make_cube(200., 40., 5.));
+    parts.push_back(std::move(left_post));
+    parts.push_back(std::move(left_arm));
+    parts.push_back(std::move(right_post));
+    parts.push_back(std::move(right_arm));
+    const ArrangePolygon ap   = support_arrange_poly(std::move(parts), "tree(auto)");
+    const double         room = room_beside("default", 30.);
+    check_support_margin(ap, 1., false);
+    check_extent(ap, 0., 200., -room, 40. + room);
 }
 
 TEST_CASE("Arrange keeps the normal support margin when the threshold angle is zero", "[Arrange][Support]")

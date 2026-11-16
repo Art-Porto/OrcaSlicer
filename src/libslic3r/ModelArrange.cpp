@@ -16,12 +16,14 @@
 #include "BoundingBox.hpp"
 #include "ExPolygon.hpp"
 #include "Polygon.hpp"
+#include "Line.hpp"
 #include "Geometry.hpp"
 #include "TriangleSelector.hpp"
 #include "AABBMesh.hpp"
 #include "libslic3r.h"
 #include "admesh/stl.h"
 #include <cmath>
+#include <limits>
 #include <vector>
 
 namespace Slic3r {
@@ -166,6 +168,20 @@ static double object_float(ModelObject &object, const DynamicPrintConfig &config
     return opt != nullptr ? opt->value : 0.;
 }
 
+// The radius of a tree trunk at the bed holding up a point at height z, before its first layer grows, in mm.
+static double tree_trunk_radius(ModelObject &object, const DynamicPrintConfig &config, double z)
+{
+    const double angle = Geometry::deg2rad(std::clamp(object_float(object, config, "tree_support_branch_diameter_angle"), 0., 15.));
+    if (organic_tree_support(object, config))
+        // An organic branch thickens toward the bed by its Branch Diameter Angle, and a trunk is at least 7.5 mm across
+        // at the bed (TreeSupportMeshGroupSettings::support_tree_bp_diameter).
+        return std::max(object_float(object, config, "tree_support_branch_diameter_organic") / 2. + z * std::tan(angle), 3.75);
+    // A slim, strong or hybrid branch thickens from half its Branch Diameter by the angle in radians, below a tip as
+    // tall, up to 10 mm (TreeSupport::calc_branch_radius(), MAX_BRANCH_RADIUS).
+    const double tip = std::max(0.4, object_float(object, config, "tree_support_branch_diameter") / 2.);
+    return std::min(tip + std::max(0., z - tip) * angle, 10.);
+}
+
 // How far support reaches on the bed around where it stands, holding up a point at height z, in mm.
 static double support_reach(ModelObject &object, const DynamicPrintConfig &config, SupportType support_type, double z)
 {
@@ -174,15 +190,11 @@ static double support_reach(ModelObject &object, const DynamicPrintConfig &confi
         // Normal support stands right under what it holds up. Arrange has always kept 6 mm for it, which covers its
         // default expansion; more Normal support expansion or First layer expansion reaches further.
         return 6. + std::max(0., object_float(object, config, "support_expansion")) + std::max(0., first_layer_expansion - 2.);
-    if (organic_tree_support(object, config)) {
-        // An organic branch thickens toward the bed by its Branch Diameter Angle, and a trunk is at least 7.5 mm across
-        // at the bed (TreeSupportMeshGroupSettings::support_tree_bp_diameter). Its first layer grows by First layer expansion.
-        const double angle = Geometry::deg2rad(std::clamp(object_float(object, config, "tree_support_branch_diameter_angle"), 0., 15.));
-        const double radius = object_float(object, config, "tree_support_branch_diameter_organic") / 2. + z * std::tan(angle);
-        return std::max(radius, 3.75) + first_layer_expansion;
-    }
-    // Slim, strong and hybrid: a branch is 10 mm wide at most (TreeSupport::MAX_BRANCH_RADIUS), and its first layer gets a
-    // brim, which reaches 12 mm at most when automatic (MAX_BRANCH_RADIUS_FIRST_LAYER), see TreeSupport::draw_circles().
+    if (organic_tree_support(object, config))
+        // The first layer of an organic trunk grows by First layer expansion.
+        return tree_trunk_radius(object, config, z) + first_layer_expansion;
+    // The first layer of a slim, strong or hybrid trunk gets a brim, which reaches 12 mm at most when automatic
+    // (MAX_BRANCH_RADIUS_FIRST_LAYER), see TreeSupport::draw_circles().
     const ConfigOptionBool *auto_brim = object.get_config_value<ConfigOptionBool>(config, "tree_support_auto_brim");
     return auto_brim != nullptr && !auto_brim->value ? 10. + object_float(object, config, "tree_support_brim_width") : 12.;
 }
@@ -191,6 +203,72 @@ static double support_reach(ModelObject &object, const DynamicPrintConfig &confi
 static double support_gap(ModelObject &object, const DynamicPrintConfig &config)
 {
     return std::max(object_float(object, config, "support_object_xy_distance"), object_float(object, config, "support_object_first_layer_gap"));
+}
+
+// How far past the object's outline a tree trunk that comes down beside it reaches: its middle stands past the support
+// gap by its radius on the bed, and its first layer reaches around it. An organic trunk keeps its whole first layer,
+// grown by First layer expansion, past the gap. The brim of a slim, strong or hybrid trunk is cut where it would come
+// closer than the gap (TreeSupport::draw_circles()), so only the trunk under it is.
+static double tree_room_beside(ModelObject &object, const DynamicPrintConfig &config, SupportType support_type, double z)
+{
+    const double reach  = support_reach(object, config, support_type, z);
+    const double radius = organic_tree_support(object, config) ? reach : tree_trunk_radius(object, config, z);
+    return radius + support_gap(object, config) + reach;
+}
+
+// Where tree support for the points held up over the object comes down beside it, on the object's outline. A branch
+// leaves the object at the nearest edge of the outline when it can reach past it, by its Branch Angle. Organic branches
+// that can meet on the way down merge into one trunk (TreeSupport3D merges their influence areas), which the tallest of
+// them leads down on its own side; the others leave on their own sides only when that is the same side. Slim, strong and
+// hybrid branches each move to their own nearest edge (TreeSupport::drop_nodes()).
+static Points tree_trunks_beside(ModelObject &object, const DynamicPrintConfig &config, const Polygon &outline, std::vector<Vec3d> over_object)
+{
+    const bool   organic   = organic_tree_support(object, config);
+    const double angle     = object_float(object, config, organic ? "tree_support_branch_angle_organic" : "tree_support_branch_angle");
+    const double tan_angle = std::tan(Geometry::deg2rad(std::clamp(angle, 0., 60.)));
+    const double outward   = outline.is_counter_clockwise() ? 1. : -1.;
+    struct Branch
+    {
+        Vec3d held;
+        Point edge;
+        Vec2d side;
+    };
+    std::vector<Branch> branches;
+    std::stable_sort(over_object.begin(), over_object.end(), [](const Vec3d &a, const Vec3d &b) { return a.z() > b.z(); });
+    for (const Vec3d &pt : over_object) {
+        const Point held(scaled(pt.x()), scaled(pt.y()));
+        Branch      branch{ pt, held, Vec2d::Zero() };
+        double      dist2 = std::numeric_limits<double>::max();
+        for (const Line &line : outline.lines()) {
+            Point        foot;
+            const double d2 = line.distance_to_squared(held, &foot);
+            if (d2 < dist2) {
+                dist2       = d2;
+                branch.edge = foot;
+                branch.side = outward * line.normal().cast<double>();
+            }
+        }
+        if (std::sqrt(dist2) <= scaled(pt.z() * tan_angle))
+            branches.push_back(branch);
+    }
+    Points beside;
+    std::vector<const Branch *> leaders;
+    for (const Branch &branch : branches) {
+        const Branch *leader = nullptr;
+        if (organic)
+            for (const Branch *tall : leaders)
+                if ((tall->held - branch.held).head<2>().norm() <= (tall->held.z() + branch.held.z()) * tan_angle) {
+                    leader = tall;
+                    break;
+                }
+        // A branch as tall as its leader may lead the trunk too.
+        if (leader == nullptr || branch.held.z() > leader->held.z() - EPSILON)
+            leaders.push_back(&branch);
+        else if (branch.side.dot(leader->side) <= 0.)
+            continue;
+        beside.push_back(branch.edge);
+    }
+    return beside;
 }
 
 // Sorts the points support holds up by what is under them. Support for a point over the object stands on it, or, for
@@ -395,29 +473,16 @@ ArrangePolygon get_instance_arrange_poly(ModelInstance* instance, const Slic3r::
     const BoundingBoxf3 bbox = obj->instance_convex_hull_bounding_box(instance);
 
     if (support.whole_object) {
-        const double reach = support_reach(*obj, config, support_type, bbox.max.z());
         if (tree_support) {
             // A trunk may come down beside the object anywhere, see below. update_selected_items_inflation() keeps
             // half the brim width of tree support around the object.
-            ap.brim_width       = 2. * (2. * reach + support_gap(*obj, config));
+            ap.brim_width       = 2. * tree_room_beside(*obj, config, support_type, bbox.max.z());
             ap.has_tree_support = true;
         } else
-            ap.brim_width = reach;
+            ap.brim_width = support_reach(*obj, config, support_type, bbox.max.z());
     } else if (support.needed) {
-        const double reach = support_reach(*obj, config, support_type, support.top);
-        // A tree branch holding up a point over the object comes down beside it when it can reach past the object's
-        // edge, by its Branch Angle. Its trunk then stands past the gap support keeps from the object.
-        Points beside;
-        if (tree_support) {
-            const double branch_angle = object_float(*obj, config, organic_tree_support(*obj, config) ? "tree_support_branch_angle_organic" : "tree_support_branch_angle");
-            const double tan_angle    = std::tan(Geometry::deg2rad(std::clamp(branch_angle, 0., 60.)));
-            for (const Vec3d &pt : support.over_object) {
-                const Point held(scaled(pt.x()), scaled(pt.y()));
-                const Point edge = ap.poly.contour.point_projection(held);
-                if ((edge - held).cast<double>().norm() <= scaled(pt.z() * tan_angle))
-                    beside.emplace_back(edge);
-            }
-        }
+        const double reach  = support_reach(*obj, config, support_type, support.top);
+        const Points beside = tree_support ? tree_trunks_beside(*obj, config, ap.poly.contour, support.over_object) : Points{};
         // The polygon reaches past the support by its reach, and the object keeps its own margin.
         Points     points    = std::move(ap.poly.contour.points);
         const auto keep_room = [&points](const Points &around, double room) {
@@ -432,7 +497,7 @@ ArrangePolygon get_instance_arrange_poly(ModelInstance* instance, const Slic3r::
                 }
         };
         keep_room(support.under, reach - ap.brim_width);
-        keep_room(beside, 2. * reach + support_gap(*obj, config) - ap.brim_width);
+        keep_room(beside, tree_room_beside(*obj, config, support_type, support.top) - ap.brim_width);
         ap.poly = ExPolygon(Geometry::convex_hull(std::move(points)));
     }
 
