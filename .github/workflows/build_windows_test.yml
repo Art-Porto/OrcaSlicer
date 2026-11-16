@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - pbc3-wintest
-      - pbc3-wintest-nofix
+      - pbc4-wintest
+      - pbc4-wintest-nofix
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
