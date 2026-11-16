@@ -6,7 +6,8 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - dtp-wintest
+      - asn-wintest
+      - asn-wintest-nofix
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
