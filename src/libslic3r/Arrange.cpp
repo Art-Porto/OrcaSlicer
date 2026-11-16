@@ -227,11 +227,8 @@ void update_selected_items_inflation(ArrangePolygons& selected, const DynamicPri
 
 double get_inflated_item_area(const ArrangePolygon& item, const DynamicPrintConfig* print_cfg, const ArrangeParams& params)
 {
-    // Grow a copy as the arrange will, on params of its own, since the inflation update changes them.
-    ArrangePolygons items{item};
-    ArrangeParams   item_params = params;
-    update_selected_items_inflation(items, print_cfg, item_params);
-    const ExPolygons inflated = offset_ex(item.poly, float(items.front().inflation));
+    // TEMPORARY nofix: the count as before, the object grown by half the set spacing only.
+    const ExPolygons inflated = offset_ex(item.poly, float(params.min_obj_distance / 2));
     const ExPolygon& outline  = inflated.empty() ? item.poly : inflated.front();
     return outline.area() / (scaled<double>(1.) * scaled<double>(1.));
 }
