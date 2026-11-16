@@ -159,16 +159,33 @@ static SupportFootprint instance_support(ModelObject &object, const ModelInstanc
         const ConfigOptionInt *opt = object.get_config_value<ConfigOptionInt>(config, key);
         return opt != nullptr ? opt->value : 0;
     };
-    // A raft is printed as support.
+    // A raft is printed as support, and enforcers and negative volumes add overhangs the parts don't show.
     if (object_int("raft_layers") > 0)
         return whole_object;
+    for (const ModelVolume *volume : object.volumes)
+        if (volume->is_support_enforcer() || volume->is_negative_volume() ||
+            (volume->is_model_part() && volume->supported_facets.has_facets(*volume, EnforcerBlockerType::ENFORCER)))
+            return whole_object;
+    // Manual support is only generated on enforcers.
+    if (!is_auto(support_type))
+        return {};
     // A tilted plate or a belt measures overhangs against another direction.
-    bool tilted = false;
     for (const char *key : { "build_plate_tilt_x", "build_plate_tilt_y" })
         if (const ConfigOptionFloat *tilt = config.option<ConfigOptionFloat>(key); tilt != nullptr && tilt->value != 0.)
-            tilted = true;
+            return whole_object;
     if (const ConfigOptionBool *belt = config.option<ConfigOptionBool>("belt_printer"); belt != nullptr && belt->value)
-        tilted = true;
+        return whole_object;
+    int threshold_deg = object_int("support_threshold_angle");
+    if (threshold_deg == 0) {
+        // Normal support then goes by the threshold overlap, which no angle stands for. Tree support takes 30 degrees.
+        if (!is_tree(support_type))
+            return whole_object;
+        threshold_deg = 30;
+    }
+    const double cos_threshold = std::cos(Geometry::deg2rad(double(threshold_deg)));
+    // Nothing gets support within the first layer.
+    const ConfigOptionFloat *first_layer = config.option<ConfigOptionFloat>("initial_layer_print_height");
+    const double above_bed = (first_layer != nullptr ? first_layer->value : 0.) + EPSILON;
 
     // The frame of ModelInstance::get_arrange_polygon(): the arrange turns the polygon about Z and moves it on the bed.
     Vec3d rotation = instance.get_rotation();
@@ -182,34 +199,6 @@ static SupportFootprint instance_support(ModelObject &object, const ModelInstanc
         support.needed = true;
         support.under.emplace_back(scaled(pt.x()), scaled(pt.y()));
     };
-    // Enforcers and negative volumes add overhangs the parts don't show, under the enforced facets and within the volumes.
-    for (const ModelVolume *volume : object.volumes) {
-        const Transform3d trafo = frame.get_matrix() * volume->get_matrix();
-        if (volume->is_support_enforcer() || volume->is_negative_volume())
-            for (const stl_vertex &pt : volume->mesh().its.vertices)
-                stands_under(trafo * pt.cast<double>());
-        else if (volume->is_model_part() && volume->supported_facets.has_facets(*volume, EnforcerBlockerType::ENFORCER))
-            for (const stl_vertex &pt : volume->supported_facets.get_facets(*volume, EnforcerBlockerType::ENFORCER).vertices)
-                stands_under(trafo * pt.cast<double>());
-    }
-    // Tilted, where it stands can't be told: around the whole object whenever there may be support.
-    if (tilted)
-        return support.needed || is_auto(support_type) ? whole_object : support;
-    // Manual support is only generated on enforcers.
-    if (!is_auto(support_type))
-        return support;
-    int threshold_deg = object_int("support_threshold_angle");
-    if (threshold_deg == 0) {
-        // Normal support then goes by the threshold overlap, which no angle stands for. Tree support takes 30 degrees.
-        if (!is_tree(support_type))
-            return whole_object;
-        threshold_deg = 30;
-    }
-    const double cos_threshold = std::cos(Geometry::deg2rad(double(threshold_deg)));
-    // Nothing gets support within the first layer.
-    const ConfigOptionFloat *first_layer = config.option<ConfigOptionFloat>("initial_layer_print_height");
-    const double above_bed = (first_layer != nullptr ? first_layer->value : 0.) + EPSILON;
-
     for (const ModelVolume *volume : object.volumes) {
         if (!volume->is_model_part())
             continue;
