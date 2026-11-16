@@ -4770,7 +4770,9 @@ void GLCanvas3D::on_char(wxKeyEvent& evt)
 
     // BBS: use keypad to change extruder
     case '1': {
-        if (!m_timer_set_color.IsRunning()) {
+        // 1 waits for a second digit, which picks filaments 10 to 16. Orca: with fewer than 10 filaments there is no
+        // such filament, so 1 applies at once, like the other keys.
+        if (!m_timer_set_color.IsRunning() && wxGetApp().plater()->get_extruder_colors_from_plater_config().size() >= 10) {
             m_timer_set_color.StartOnce(500);
             break;
         }
