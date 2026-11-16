@@ -780,40 +780,81 @@ static void check_support_margin(const ArrangePolygon &ap, double margin, bool t
     CHECK(ap.has_tree_support == tree);
 }
 
+static void check_extent(const ArrangePolygon &ap, double min_x, double max_x, double min_y, double max_y)
+{
+    const BoundingBox bb = ap.poly.contour.bounding_box();
+    CHECK_THAT(unscaled(bb.min.x()), Catch::Matchers::WithinAbs(min_x, 0.01));
+    CHECK_THAT(unscaled(bb.max.x()), Catch::Matchers::WithinAbs(max_x, 0.01));
+    CHECK_THAT(unscaled(bb.min.y()), Catch::Matchers::WithinAbs(min_y, 0.01));
+    CHECK_THAT(unscaled(bb.max.y()), Catch::Matchers::WithinAbs(max_y, 0.01));
+}
+
 TEST_CASE("Arrange gives no support margin to an object with nothing to support", "[Arrange][Support]")
 {
     const std::string support_type = GENERATE("tree(auto)", "normal(auto)");
     const bool        mirrored     = GENERATE(false, true);
     INFO("support_type = " << support_type << ", mirrored = " << mirrored);
-    check_support_margin(support_arrange_poly(cube_on_bed(), support_type, {}, mirrored), 1., false);
+    const ArrangePolygon ap = support_arrange_poly(cube_on_bed(), support_type, {}, mirrored);
+    check_support_margin(ap, 1., false);
+    check_extent(ap, mirrored ? -20. : 0., mirrored ? 0. : 20., 0., 20.);
 }
 
-TEST_CASE("Arrange keeps the support margin of an object with an overhang", "[Arrange][Support]")
+// A 20 mm cube with a 10 mm ledge on the top half of its +X side, whose bottom face, 10 mm above the bed, looks
+// straight down: support stands under the ledge only.
+static std::vector<TriangleMesh> cube_with_ledge()
 {
-    const auto [support_type, margin, tree] = GENERATE(table<std::string, double, bool>({
-        { "tree(auto)", 24., true },
-        { "normal(auto)", 6., false },
-    }));
-    const bool mirrored = GENERATE(false, true);
-    INFO("support_type = " << support_type << ", mirrored = " << mirrored);
-    check_support_margin(support_arrange_poly(cube_with_overhang(), support_type, {}, mirrored), margin, tree);
+    TriangleMesh ledge = make_cube(10., 20., 10.);
+    ledge.translate(20.f, 0.f, 10.f);
+    return { make_cube(20., 20., 20.), std::move(ledge) };
+}
 
-    // A sphere on the bed: the faces near its bottom look down, above the first layer.
+// The room past the support: what update_selected_items_inflation() keeps around a supported object, 6 mm for normal
+// support and 12 mm for tree support, less the 1 mm margin the object keeps.
+static double support_room(const std::string &support_type) { return support_type == "tree(auto)" ? 11. : 5.; }
+
+TEST_CASE("Arrange leaves room for support on the side of an overhang only", "[Arrange][Support]")
+{
+    const std::string support_type = GENERATE("tree(auto)", "normal(auto)");
+    const bool        mirrored     = GENERATE(false, true);
+    INFO("support_type = " << support_type << ", mirrored = " << mirrored);
+    const ArrangePolygon ap   = support_arrange_poly(cube_with_ledge(), support_type, {}, mirrored);
+    const double         room = support_room(support_type);
+    check_support_margin(ap, 1., false);
+    // Past the ledge, on its sides, and not on the other side of the cube. Mirrored along X, it sticks out toward -X.
+    if (mirrored)
+        check_extent(ap, -30. - room, 0., -room, 20. + room);
+    else
+        check_extent(ap, 0., 30. + room, -room, 20. + room);
+}
+
+TEST_CASE("Arrange leaves room for support under the bottom of a sphere", "[Arrange][Support]")
+{
+    // A sphere on the bed: support holds up the faces near its bottom, flatter than the 30 degree threshold, out to
+    // a radius of about sin(30 degrees) * 10 mm.
+    const std::string support_type = GENERATE("tree(auto)", "normal(auto)");
+    INFO("support_type = " << support_type);
     TriangleMesh sphere = make_sphere(10.);
     sphere.translate(0.f, 0.f, 10.f);
-    check_support_margin(support_arrange_poly({ std::move(sphere) }, support_type, {}, mirrored), margin, tree);
+    const ArrangePolygon ap = support_arrange_poly({ std::move(sphere) }, support_type, { { "support_threshold_angle", "30" } });
+    check_support_margin(ap, 1., false);
+    const double radius = std::max(10., 5. + support_room(support_type));
+    const BoundingBox bb = ap.poly.contour.bounding_box();
+    CHECK_THAT(unscaled(bb.size().x()), Catch::Matchers::WithinAbs(2. * radius, 0.5));
+    CHECK_THAT(unscaled(bb.size().y()), Catch::Matchers::WithinAbs(2. * radius, 0.5));
 }
 
-TEST_CASE("Arrange keeps the support margin of a sharp tail in the air", "[Arrange][Support]")
+TEST_CASE("Arrange leaves room for support under a sharp tail in the air", "[Arrange][Support]")
 {
-    // A steep cone hanging tip down beside the cube, its tip 5 mm above the bed. Its sides are 84 degrees steep,
-    // far past the 30 degree threshold, but the tip starts an island in the air.
+    // A steep cone hanging tip down beside the cube, its tip 5 mm above the bed at (30, 10). Its sides are 84 degrees
+    // steep, far past the 30 degree threshold, but the tip starts an island in the air.
     TriangleMesh cone = make_cone(2., 20.);
     cone.rotate_x(float(PI));
     cone.translate(30.f, 10.f, 25.f);
     std::vector<TriangleMesh> parts = cube_on_bed();
     parts.push_back(std::move(cone));
-    check_support_margin(support_arrange_poly(std::move(parts), "tree(auto)", { { "support_threshold_angle", "30" } }), 24., true);
+    const ArrangePolygon ap = support_arrange_poly(std::move(parts), "tree(auto)", { { "support_threshold_angle", "30" } });
+    check_support_margin(ap, 1., false);
+    check_extent(ap, 0., 30. + 11., 10. - 11., 10. + 11.);
 }
 
 TEST_CASE("Arrange gives no support margin to manual support without enforcers", "[Arrange][Support]")
