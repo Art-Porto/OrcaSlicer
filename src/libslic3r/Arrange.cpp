@@ -173,8 +173,8 @@ void update_selected_items_inflation(ArrangePolygons& selected, const DynamicPri
     }
     std::for_each(selected.begin(), selected.end(), [&](ArrangePolygon& ap) {
         // 1. if user input a distance, use it
-        // 2. Orca: an object with tree support keeps a branch's first layer radius around it (its brim width is the
-        //    branch diameter), which keeps the other objects clear of its branches; they keep their own margin
+        // 2. Orca: an object whose tree support may stand anywhere around it keeps half its brim width around it, the
+        //    room of a trunk beside it (see get_instance_arrange_poly()); the other objects keep their own margin
         // 3. otherwise, use each object's own brim width
         ap.inflation = params.min_obj_distance != 0 ? params.min_obj_distance / 2 :
             ap.has_tree_support ? scaled(ap.brim_width / 2) : scaled(ap.brim_width);

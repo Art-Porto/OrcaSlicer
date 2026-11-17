@@ -1071,8 +1071,8 @@ TEST_CASE("Arrange keeps the normal support margin when the threshold angle is z
 
 TEST_CASE("Arrange keeps the tree support margin around the supported object only", "[Arrange][Support]")
 {
-    // A tree supported object's margin is the branch diameter, half of it on each side, so its neighbors are clear
-    // of its branches. The other objects keep their own 1 mm margin and may stand close to each other.
+    // An object whose tree support may stand anywhere around it keeps half its brim width on each side, so its
+    // neighbors are clear of its trunks. The other objects keep their own 1 mm margin and may stand close to each other.
     DynamicPrintConfig cfg = bed_config();
     ArrangeParams      p   = quiet_params();
     ArrangePolygons items  = squares(3, 20.);
