@@ -923,18 +923,33 @@ static double room_beside(const std::string &support_style, double z)
     return reach + 0.35 + reach - 1.;
 }
 
-TEST_CASE("Arrange keeps the support margin of an object on a raft", "[Arrange][Support]")
+// A raft of 2 layers, grown by a 1.5 mm Raft expansion, under a first layer grown by the 2 mm First layer expansion.
+// Its first layer reaches past what stands on it by the larger expansion and First layer expansion, 2 + 2 mm.
+static constexpr double raft_room = 4.;
+
+TEST_CASE("Arrange keeps the room of a raft around the object, with support on or off", "[Arrange][Support]")
 {
-    // A raft is printed as support, so it is kept around the whole object. Normal support reaches 6 mm. A tree trunk
-    // may come down beside the 20 mm cube anywhere, past the 0.35 mm gap, see room_beside().
-    struct Raft { std::string support_type, support_style; double margin; bool tree; };
-    const Raft raft = GENERATE(Raft{ "normal(auto)", "default", 6., false },
-                               Raft{ "tree(auto)", "default", 2. * (room_beside("default", 20.) + 1.), true },
-                               Raft{ "tree(auto)", "tree_hybrid", 2. * (room_beside("tree_hybrid", 20.) + 1.), true });
-    INFO("support_type = " << raft.support_type << ", support_style = " << raft.support_style);
-    check_support_margin(support_arrange_poly(cube_on_bed(), raft.support_type,
-                                              { { "raft_layers", "2" }, { "support_style", raft.support_style } }),
-                         raft.margin, raft.tree);
+    // The cube on the raft has nothing to support, so it keeps the raft's room and its own 1 mm margin only.
+    const std::string support_type  = GENERATE("tree(auto)", "normal(auto)");
+    const std::string support_style = GENERATE("default", "tree_hybrid");
+    const std::string support_on    = GENERATE("1", "0");
+    INFO("support_type = " << support_type << ", support_style = " << support_style << ", enable_support = " << support_on);
+    const ArrangePolygon ap = support_arrange_poly(cube_on_bed(), support_type,
+                                                   { { "raft_layers", "2" }, { "raft_expansion", "1.5" },
+                                                     { "support_style", support_style }, { "enable_support", support_on } });
+    check_support_margin(ap, 1. + raft_room, false);
+    check_extent(ap, 0., 20., 0., 20.);
+}
+
+TEST_CASE("Arrange leaves room for the raft under support on the side of an overhang only", "[Arrange][Support]")
+{
+    // The raft reaches past the support under the ledge as far as past the cube.
+    const std::string support_type = GENERATE("tree(auto)", "normal(auto)");
+    INFO("support_type = " << support_type);
+    const ArrangePolygon ap   = support_arrange_poly(cube_with_ledge(), support_type, { { "raft_layers", "2" }, { "raft_expansion", "1.5" } });
+    const double         room = support_room(support_type);
+    check_support_margin(ap, 1. + raft_room, false);
+    check_extent(ap, 0., 30. + room, -room, 20. + room);
 }
 
 // A 20 mm column 110 mm tall with a 10 mm ledge on the top of its +X side, whose bottom face, 100 mm above the bed,

@@ -205,6 +205,18 @@ static double support_gap(ModelObject &object, const DynamicPrintConfig &config)
     return std::max(object_float(object, config, "support_object_xy_distance"), object_float(object, config, "support_object_first_layer_gap"));
 }
 
+// How far the first layer of a raft reaches past what stands on it, in mm, or 0 without a raft. Slim, strong and hybrid
+// tree support grow the raft by First layer expansion and its first layer by as much again (TreeSupport::generate_toolpaths()),
+// the other support by Raft expansion and its first layer by First layer expansion.
+static double raft_reach(ModelObject &object, const DynamicPrintConfig &config)
+{
+    const ConfigOptionInt *raft_layers = object.get_config_value<ConfigOptionInt>(config, "raft_layers");
+    if (raft_layers == nullptr || raft_layers->value <= 0)
+        return 0.;
+    const double first_layer_expansion = std::max(0., object_float(object, config, "raft_first_layer_expansion"));
+    return std::max(std::max(0., object_float(object, config, "raft_expansion")), first_layer_expansion) + first_layer_expansion;
+}
+
 // How far past the object's outline a tree trunk that comes down beside it reaches: its middle stands past the support
 // gap by its radius on the bed, and its first layer reaches around it. An organic trunk keeps its whole first layer,
 // grown by First layer expansion, past the gap. The brim of a slim, strong or hybrid trunk is cut where it would come
@@ -329,9 +341,6 @@ static SupportFootprint instance_support(ModelObject &object, const ModelInstanc
         const ConfigOptionInt *opt = object.get_config_value<ConfigOptionInt>(config, key);
         return opt != nullptr ? opt->value : 0;
     };
-    // A raft is printed as support.
-    if (object_int("raft_layers") > 0)
-        return whole_object;
     // A tilted plate or a belt measures overhangs against another direction.
     bool tilted = false;
     for (const char *key : { "build_plate_tilt_x", "build_plate_tilt_y" })
@@ -461,7 +470,9 @@ ArrangePolygon get_instance_arrange_poly(ModelInstance* instance, const Slic3r::
     // get brim width
     auto obj = instance->get_object();
 
-    ap.brim_width = 1.0;
+    // Orca: a raft reaches past the object, with support on or off, and past the support standing on it.
+    const double raft = raft_reach(*obj, config);
+    ap.brim_width     = 1.0 + raft;
     // For by-layer printing, need to shrink bed a little, so the support won't go outside bed.
     // Orca: an object whose support has nothing to hold up gets no support margin, an object whose support stands on
     // one side gets it on that side only, and the margin is as wide as the support's type and style reach.
@@ -476,12 +487,12 @@ ArrangePolygon get_instance_arrange_poly(ModelInstance* instance, const Slic3r::
         if (tree_support) {
             // A trunk may come down beside the object anywhere, see below. update_selected_items_inflation() keeps
             // half the brim width of tree support around the object.
-            ap.brim_width       = 2. * tree_room_beside(*obj, config, support_type, bbox.max.z());
+            ap.brim_width       = 2. * (tree_room_beside(*obj, config, support_type, bbox.max.z()) + raft);
             ap.has_tree_support = true;
         } else
-            ap.brim_width = support_reach(*obj, config, support_type, bbox.max.z());
+            ap.brim_width = support_reach(*obj, config, support_type, bbox.max.z()) + raft;
     } else if (support.needed) {
-        const double reach  = support_reach(*obj, config, support_type, support.top);
+        const double reach  = support_reach(*obj, config, support_type, support.top) + raft;
         const Points beside = tree_support ? tree_trunks_beside(*obj, config, ap.poly.contour, support.over_object) : Points{};
         // The polygon reaches past the support by its reach, and the object keeps its own margin.
         Points     points    = std::move(ap.poly.contour.points);
@@ -497,7 +508,7 @@ ArrangePolygon get_instance_arrange_poly(ModelInstance* instance, const Slic3r::
                 }
         };
         keep_room(support.under, reach - ap.brim_width);
-        keep_room(beside, tree_room_beside(*obj, config, support_type, support.top) - ap.brim_width);
+        keep_room(beside, tree_room_beside(*obj, config, support_type, support.top) + raft - ap.brim_width);
         ap.poly = ExPolygon(Geometry::convex_hull(std::move(points)));
     }
 
