@@ -2,11 +2,8 @@
 
 #include <algorithm>
 #include <initializer_list>
-<<<<<<< HEAD
 #include <utility>
-=======
 #include <string>
->>>>>>> pr/tree-support-auto-wall
 #include <vector>
 #include "libslic3r/Config.hpp"
 #include "libslic3r/PrintConfig.hpp"
