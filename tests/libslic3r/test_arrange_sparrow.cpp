@@ -13,6 +13,7 @@
 
 using namespace Slic3r;
 using namespace Slic3r::arrangement;
+using Catch::Approx; // Catch2 v3 scopes Approx under Catch::
 
 namespace {
 Polygon rectangle(double x, double y, double w, double h)
@@ -599,8 +600,8 @@ TEST_CASE("Outline to hull ratio shows the room hull packing wastes", "[Arrange]
         CHECK(outline == Catch::Approx(scale_(10.) * scale_(10.)));
     }
     SECTION("an L shape leaves a quarter of its hull empty") {
-        ArrangePolygon l = part(Polygon({Point(0, 0), Point(scale_(20), 0), Point(scale_(20), scale_(10)),
-                                         Point(scale_(10), scale_(10)), Point(scale_(10), scale_(20)), Point(0, scale_(20))}), 0);
+        ArrangePolygon l = part(Polygon({Point(0, 0), Point(scale_(20), 0.), Point(scale_(20), scale_(10)),
+                                         Point(scale_(10), scale_(10)), Point(scale_(10), scale_(20)), Point(0., scale_(20))}), 0);
         CHECK(outline_hull_ratio({l}) == Catch::Approx(300. / 350.).margin(1e-6));
     }
     SECTION("nothing to measure is neutral") {
