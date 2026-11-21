@@ -607,8 +607,8 @@ TEST_CASE("Starting a print uses the path the printer lists the upload at", "[Cr
     // K1-family firmware lists "folder:name:size:..." entries, escaping its slashes, and K2-family firmware files with their path.
     // The listed path decides over the model, which would give F018 and the unlisted F099 /mnt/UDISK and K1C /usr/data. Only the
     // upload counts: another file, a list without files, or a list in a format this host does not read leave the folder to the
-    // model. A name holding ';' and a file in a subfolder are still found, and so is the upload in a list that also names a file
-    // heart_beat.gcode. A name that is not UTF-8 makes the printer's text frame invalid, so the whole list is lost and the model
+    // model, and an upload to a subfolder keeps its subfolder there. A name holding ';' and a file in a subfolder are still found,
+    // and so is the upload in a list that also names a file heart_beat.gcode. A name that is not UTF-8 makes the printer's text frame invalid, so the whole list is lost and the model
     // decides, but the print still starts.
     const std::string k1_upload    = R"({"retGcodeFileInfo":{"totalNum":1,"fileInfo":"\/usr\/data\/printer_data\/gcodes:test.gcode:63301:0.240000:1794188820:109:\/tmp\/test.png;"}})";
     const std::string k1_other     = R"({"retGcodeFileInfo":{"totalNum":1,"fileInfo":"/usr/data/printer_data/gcodes:other.gcode:63301:0.240000:1794188820:109:/tmp/other.png;"}})";
@@ -636,6 +636,7 @@ TEST_CASE("Starting a print uses the path the printer lists the upload at", "[Cr
         {"K1C", "test.gcode", k2_heartbeat, "/mnt/UDISK/printer_data/gcodes/test.gcode"},
         {"F005", "test.gcode", no_files, "/usr/data/printer_data/gcodes/test.gcode"},
         {"F018", "test.gcode", no_files, "/mnt/UDISK/printer_data/gcodes/test.gcode"},
+        {"F018", "parts/test.gcode", no_files, "/mnt/UDISK/printer_data/gcodes/parts/test.gcode"},
         {"F018", "test.gcode", no_folders, "/mnt/UDISK/printer_data/gcodes/test.gcode"},
     }));
     CAPTURE(model, upload_path, file_list);

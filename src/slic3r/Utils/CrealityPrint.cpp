@@ -674,12 +674,12 @@ bool CrealityPrint::start_print(wxString &msg, const std::string &remote_path, c
         // printer over HTTP. It also fills m_model.
         const bool multi_color = supports_multi_color_print();
         // Starts the file at the path the printer lists it at, as Creality Print does, since the
-        // folder depends on the printer's board and not on its model. The model decides only when
-        // the printer does not list the upload.
+        // folder depends on the printer's board and not on its model. The model decides only the
+        // storage root, and only when the printer does not list the upload.
         std::string gcode_path = query_listed_gcode(remote_path);
         if (gcode_path.empty()) {
             const std::string data_root = stores_gcode_in_usr_data(m_model) ? "/usr/data" : "/mnt/UDISK";
-            gcode_path = data_root + "/printer_data/gcodes/" + remote_path.substr(remote_path.rfind('/') + 1);
+            gcode_path = data_root + "/printer_data/gcodes/" + remote_path;
             BOOST_LOG_TRIVIAL(info) << "CrealityPrint: Using " << data_root << " for model " << m_model;
         }
 
