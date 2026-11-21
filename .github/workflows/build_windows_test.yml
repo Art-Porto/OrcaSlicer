@@ -1,0 +1,34 @@
+name: Build Windows x64 (test)
+
+# Test-only: builds and tests Windows x64 alone on every push to a test slot of the fork.
+# Lives on the test branches only and is not part of any pull request.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - wintest-1
+      - wintest-2
+      - wintest-3
+      - wintest-4
+      - build-integrado-wintest
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build_windows:
+    name: Build Windows x64
+    uses: ./.github/workflows/build_check_cache.yml
+    with:
+      os: windows-latest
+      arch: x64
+      compiler: clang
+    secrets: inherit
+  unit_tests_windows_x64:
+    name: Windows x64
+    needs: build_windows
+    uses: ./.github/workflows/unit_tests.yml
+    with:
+      os: windows-latest
+      artifact: ${{ github.sha }}-tests-windows-x64
