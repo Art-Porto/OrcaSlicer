@@ -301,14 +301,15 @@ static std::string ws_await_reply(net::io_context&                             i
         if (ec)
             throw beast::system_error{ec};
         std::string msg = beast::buffers_to_string(buf.data());
+        // The reply is matched first, since a file list can name a file heart_beat.gcode.
+        if (msg.find(key) != std::string::npos)
+            return msg;
         // K1-family firmware sends periodic heartbeat pings; ack them so the
         // printer does not close the connection, then keep reading.
         if (msg.find("heart_beat") != std::string::npos) {
             ws_write(ioc, ws, "ok");
             continue;
         }
-        if (msg.find(key) != std::string::npos)
-            return msg;
         if (!on_other(msg))
             break;
     }
@@ -401,37 +402,28 @@ struct GcodeListing
 };
 } // namespace
 
-// Asks for the G-code file list until it lists remote_path or files_reply passes. A printer can answer before it has indexed a
-// file just uploaded, so a list without the upload is asked for again after files_retry.
-static GcodeListing ws_find_listed_gcode(net::io_context&                      ioc,
-                                         websocket::stream<beast::tcp_stream>& ws,
-                                         std::chrono::milliseconds             files_reply,
-                                         std::chrono::milliseconds             files_retry,
-                                         const std::string&                    remote_path)
+// Asks once for the G-code file list and looks for remote_path in it.
+static GcodeListing ws_find_listed_gcode(net::io_context&                             ioc,
+                                         websocket::stream<beast::tcp_stream>&        ws,
+                                         const std::chrono::steady_clock::time_point& deadline,
+                                         const std::string&                           remote_path)
 {
-    const auto   deadline = std::chrono::steady_clock::now() + files_reply;
     GcodeListing listing;
-    for (;;) {
-        beast::get_lowest_layer(ws).expires_at(deadline);
-        ws_send(ioc, ws, json{{"method", "get"}, {"params", {{"reqGcodeFile", 1}}}});
-        const std::string reply = ws_await_reply(ioc, ws, deadline, "retGcodeFileInfo", [](const std::string&) { return true; });
-        if (reply.empty())
-            return listing;
-        const std::optional<std::string> path = listed_gcode_path(reply, remote_path);
-        if (!path) {
-            listing.result = GcodeListing::Result::Unreadable;
-            return listing;
-        }
-        if (!path->empty()) {
-            listing.result = GcodeListing::Result::Listed;
-            listing.path   = *path;
-            return listing;
-        }
+    beast::get_lowest_layer(ws).expires_at(deadline);
+    ws_send(ioc, ws, json{{"method", "get"}, {"params", {{"reqGcodeFile", 1}}}});
+    const std::string reply = ws_await_reply(ioc, ws, deadline, "retGcodeFileInfo", [](const std::string&) { return true; });
+    if (reply.empty())
+        return listing;
+    const std::optional<std::string> path = listed_gcode_path(reply, remote_path);
+    if (!path)
+        listing.result = GcodeListing::Result::Unreadable;
+    else if (path->empty())
         listing.result = GcodeListing::Result::NotListed;
-        if (std::chrono::steady_clock::now() + files_retry >= deadline)
-            return listing;
-        std::this_thread::sleep_for(files_retry);
+    else {
+        listing.result = GcodeListing::Result::Listed;
+        listing.path   = *path;
     }
+    return listing;
 }
 
 // The K1 SE closes its side after a reply and K1-family printers after a start command, so a close error is not a failure.
@@ -542,20 +534,33 @@ std::string CrealityPrint::query_boxes_info(bool* no_cfs) const
     }
 }
 
-// Uses a connection of its own, since the K1 SE closes its side after a reply. A failed connection is not caught: the start would
-// fail the same way, and trying again would double the wait.
+// Asks for the G-code file list until it lists remote_path or files_reply passes. A printer can answer before it has indexed a
+// file just uploaded, so a list without the upload is asked for again after files_retry. Each list gets a connection of its own,
+// since the K1 SE closes its side after a reply. A failed connection is not caught: the start would fail the same way, and trying
+// again would double the wait.
 std::string CrealityPrint::query_listed_gcode(const std::string& remote_path) const
 {
-    net::io_context ioc;
-    websocket::stream<beast::tcp_stream> ws{ioc};
-    ws_connect(ioc, ws, m_host, ws_settings.port, ws_settings.connect);
-
+    const auto   deadline = std::chrono::steady_clock::now() + ws_settings.files_reply;
     GcodeListing listing;
-    try {
-        listing = ws_find_listed_gcode(ioc, ws, ws_settings.files_reply, ws_settings.files_retry, remote_path);
-    } catch (std::exception const& e) {
-        BOOST_LOG_TRIVIAL(error) << "CrealityPrint: Failed to query the G-code file list: " << e.what();
-        return {};
+    for (;;) {
+        net::io_context ioc;
+        websocket::stream<beast::tcp_stream> ws{ioc};
+        ws_connect(ioc, ws, m_host, ws_settings.port, ws_settings.connect);
+        try {
+            listing = ws_find_listed_gcode(ioc, ws, deadline, remote_path);
+        } catch (std::exception const& e) {
+            BOOST_LOG_TRIVIAL(error) << "CrealityPrint: Failed to query the G-code file list: " << e.what();
+            return {};
+        }
+        // A printer that sent no list may not answer a close either, so its connection is dropped without one.
+        if (listing.result == GcodeListing::Result::NoReply) {
+            beast::error_code ec;
+            beast::get_lowest_layer(ws).socket().close(ec);
+        } else
+            ws_close(ioc, ws, ws_settings.close);
+        if (listing.result != GcodeListing::Result::NotListed || std::chrono::steady_clock::now() + ws_settings.files_retry >= deadline)
+            break;
+        std::this_thread::sleep_for(ws_settings.files_retry);
     }
     switch (listing.result) {
     case GcodeListing::Result::Listed:
@@ -571,13 +576,6 @@ std::string CrealityPrint::query_listed_gcode(const std::string& remote_path) co
         BOOST_LOG_TRIVIAL(warning) << "CrealityPrint: Timed out waiting for the G-code file list";
         break;
     }
-
-    // A printer that sent no list may not answer a close either, so its connection is dropped without one.
-    if (listing.result == GcodeListing::Result::NoReply) {
-        beast::error_code ec;
-        beast::get_lowest_layer(ws).socket().close(ec);
-    } else
-        ws_close(ioc, ws, ws_settings.close);
     return listing.path;
 }
 

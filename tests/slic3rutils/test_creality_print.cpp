@@ -66,6 +66,7 @@ enum class Behavior {
     ReportsCfsSlowly,      // Sends a status reporting a CFS connected, then the CFS slots 1.5 s later
     StreamsCfs,            // Sends a status reporting a CFS connected every 50 ms and never sends the CFS slots
     StreamsCfsThenSlots,   // Sends 25 statuses reporting a CFS connected 50 ms apart, then the CFS slots
+    ClosesAfterFileList,   // Answers like Answers, but closes the connection after each G-code file list, as a K1 SE does
 };
 
 struct Message
@@ -191,6 +192,10 @@ private:
                     file_list = m_file_lists[std::min(m_file_list_replies++, m_file_lists.size() - 1)];
                 }
                 ws.write(net::buffer(file_list), ec);
+                if (m_behavior == Behavior::ClosesAfterFileList) {
+                    ws.next_layer().close(ec);
+                    return;
+                }
                 continue;
             }
             if (first && m_behavior == Behavior::ReportsNoCfs) {
@@ -602,8 +607,9 @@ TEST_CASE("Starting a print uses the path the printer lists the upload at", "[Cr
     // K1-family firmware lists "folder:name:size:..." entries, escaping its slashes, and K2-family firmware files with their path.
     // The listed path decides over the model, which would give F018 and the unlisted F099 /mnt/UDISK and K1C /usr/data. Only the
     // upload counts: another file, a list without files, or a list in a format this host does not read leave the folder to the
-    // model. A name holding ';' and a file in a subfolder are still found. A name that is not UTF-8 makes the printer's text frame
-    // invalid, so the whole list is lost and the model decides, but the print still starts.
+    // model. A name holding ';' and a file in a subfolder are still found, and so is the upload in a list that also names a file
+    // heart_beat.gcode. A name that is not UTF-8 makes the printer's text frame invalid, so the whole list is lost and the model
+    // decides, but the print still starts.
     const std::string k1_upload    = R"({"retGcodeFileInfo":{"totalNum":1,"fileInfo":"\/usr\/data\/printer_data\/gcodes:test.gcode:63301:0.240000:1794188820:109:\/tmp\/test.png;"}})";
     const std::string k1_other     = R"({"retGcodeFileInfo":{"totalNum":1,"fileInfo":"/usr/data/printer_data/gcodes:other.gcode:63301:0.240000:1794188820:109:/tmp/other.png;"}})";
     const std::string k1_semicolon = R"({"retGcodeFileInfo":{"totalNum":2,"fileInfo":"/usr/data/printer_data/gcodes:other.gcode:63301:0.240000:1794188820:109:/tmp/other.png;)"
@@ -615,6 +621,8 @@ TEST_CASE("Starting a print uses the path the printer lists the upload at", "[Cr
                                      R"({"name":"test.gcode","path":"/mnt/UDISK/printer_data/gcodes/test.gcode","type":8}]})";
     const std::string k2_not_utf8  = R"({"retGcodeFileInfo2":[{"name":"x.gcode","path":"/mnt/UDISK/printer_data/gcodes/)" "\xff" R"(.gcode","type":8},)"
                                      R"({"name":"test.gcode","path":"/mnt/UDISK/printer_data/gcodes/test.gcode","type":8}]})";
+    const std::string k2_heartbeat = R"({"retGcodeFileInfo2":[{"name":"heart_beat.gcode","path":"/mnt/UDISK/printer_data/gcodes/heart_beat.gcode","type":8},)"
+                                     R"({"name":"test.gcode","path":"/mnt/UDISK/printer_data/gcodes/test.gcode","type":8}]})";
     const std::string no_files     = R"({"retGcodeFileInfo2":[]})";
     const std::string no_folders   = R"({"retGcodeFileInfo3":{"fileInfo":"test.gcode:63301:1794188820;"}})";
     const auto [model, upload_path, file_list, gcode] = GENERATE_REF(table<std::string, std::string, std::string, std::string>({
@@ -625,6 +633,7 @@ TEST_CASE("Starting a print uses the path the printer lists the upload at", "[Cr
         {"K1C", "test.gcode", k2_upload, "/mnt/UDISK/printer_data/gcodes/test.gcode"},
         {"K1C", "test.gcode", k2_both, "/mnt/UDISK/printer_data/gcodes/test.gcode"},
         {"K1C", "test.gcode", k2_not_utf8, "/usr/data/printer_data/gcodes/test.gcode"},
+        {"K1C", "test.gcode", k2_heartbeat, "/mnt/UDISK/printer_data/gcodes/test.gcode"},
         {"F005", "test.gcode", no_files, "/usr/data/printer_data/gcodes/test.gcode"},
         {"F018", "test.gcode", no_files, "/mnt/UDISK/printer_data/gcodes/test.gcode"},
         {"F018", "test.gcode", no_folders, "/mnt/UDISK/printer_data/gcodes/test.gcode"},
@@ -655,6 +664,24 @@ TEST_CASE("Starting a print asks again for a file list that does not list the up
     const std::string no_files  = R"({"retGcodeFileInfo2":[]})";
     const std::string k2_upload = R"({"retGcodeFileInfo2":[{"name":"test.gcode","path":"/mnt/UDISK/printer_data/gcodes/test.gcode","type":8}]})";
     FakeCrealityPrinter printer(Behavior::Answers, "K1C", {no_files, k2_upload});
+    const auto host               = make_host(printer, 5s);
+    host->ws_settings.files_retry = 50ms;
+    wxString error;
+
+    CHECK(upload_and_print(*host, error));
+    CHECK(error.empty());
+    CHECK(file_list_queries(printer) == 2);
+    const std::vector<Message> start = start_messages(printer);
+    REQUIRE(start.size() == 1);
+    CHECK(nlohmann::json::parse(start[0].payload).at("params").at("opGcodeFile") == "printprt:/mnt/UDISK/printer_data/gcodes/test.gcode");
+}
+
+TEST_CASE("Starting a print asks again on a new connection when the printer closes it after a file list", "[CrealityPrint]")
+{
+    // A K1 SE closes its side after a reply. K1C's model alone would give /usr/data.
+    const std::string no_files  = R"({"retGcodeFileInfo2":[]})";
+    const std::string k2_upload = R"({"retGcodeFileInfo2":[{"name":"test.gcode","path":"/mnt/UDISK/printer_data/gcodes/test.gcode","type":8}]})";
+    FakeCrealityPrinter printer(Behavior::ClosesAfterFileList, "K1C", {no_files, k2_upload});
     const auto host               = make_host(printer, 5s);
     host->ws_settings.files_retry = 50ms;
     wxString error;
