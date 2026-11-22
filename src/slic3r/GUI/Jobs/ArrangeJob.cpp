@@ -719,17 +719,18 @@ void ArrangeJob::prepare()
     m_pack_eligible = params.use_sparrow;
     params.use_sparrow = false;
     m_packing          = false;
+    m_pack_skipped     = false;
     m_stock_score      = -1;
     m_packed_score     = -1;
     m_stock_unplaced   = m_packed_unplaced = 0;
+    m_plates_before    = m_plater->get_partplate_list().get_plate_count();
 
     // After the close above, or the toast is gone before it is seen.
     if (arrangement::sparrow_available() && m_plater->canvas3D()->get_arrange_settings().arrange_use_sparrow && !m_pack_eligible) {
-        wxString why = params.is_seq_print ? _L("print sequence is By Object")
-                                           : _L("the printer is a belt printer");
         m_plater->get_notification_manager()->push_notification(NotificationType::BBLPlateInfo,
             NotificationManager::NotificationLevel::WarningNotificationLevel,
-            into_u8(wxString::Format(_L("Experimental packer skipped: %s.\nUsing the standard arranger."), why)));
+            params.is_seq_print ? _u8L("Experimental packer skipped: print sequence is By Object.\nUsing the standard arranger.")
+                                : _u8L("Experimental packer skipped: the printer is a belt printer.\nUsing the standard arranger."));
     }
 
     //BBS update extruder params and speed table before arranging
@@ -857,6 +858,17 @@ bool ArrangeJob::predict_better(int stock_score, double bed_area) const
     if (only_on_partplate)
         return stock_score >= 1 && outline <= bed_area;
     return (stock_score >= 2 || m_stock_unplaced > 0) && ratio < 0.85;
+}
+
+// Why predict_better() kept the standard result, so that the packer does not look ignored.
+std::string ArrangeJob::skip_message() const
+{
+    if (only_on_partplate)
+        return m_stock_score == 0 ? _u8L("All parts fit on the plate, so the experimental packer did not run.")
+                                  : _u8L("The parts cover more than the plate, so the experimental packer did not run.");
+    if (m_stock_score < 2 && m_stock_unplaced == 0)
+        return _u8L("The standard arrangement fits on one plate, so the experimental packer did not run.");
+    return _u8L("The shapes of the parts leave little room to pack them tighter, so the experimental packer did not run.");
 }
 
 std::string ArrangeJob::done_message(bool canceled) const
@@ -1030,8 +1042,12 @@ void ArrangeJob::process(Ctl &ctl)
 
     m_stock_score    = score(m_selected, m_unselected);
     m_stock_unplaced = unplaced(m_selected);
-    if (m_pack_eligible && !ctl.was_canceled() && predict_better(m_stock_score, std::abs(Polygon(bedpts).area())))
-        pack_tighter(ctl, pack_selected, bedpts);
+    if (m_pack_eligible && !ctl.was_canceled()) {
+        if (predict_better(m_stock_score, std::abs(Polygon(bedpts).area())))
+            pack_tighter(ctl, pack_selected, bedpts);
+        else
+            m_pack_skipped = true;
+    }
 
     // sort by item id
     std::sort(m_selected.begin(), m_selected.end(), [](auto a, auto b) {return a.itemid < b.itemid; });
@@ -1244,6 +1260,11 @@ void ArrangeJob::apply_result(ArrangePolygons &selected, ArrangePolygons &unsele
     }
     else {
         plate_list.rebuild_plates_after_arrangement(false, true);
+        // The live view of the packer, and the stock result applied before the packed one,
+        // may add plates that this result leaves empty. Remove those, never one from before.
+        if (m_packing)
+            for (int i = plate_list.get_plate_count() - 1; i >= m_plates_before && plate_list.get_plate(i)->empty(); --i)
+                plate_list.delete_plate(i);
     }
 
     // unlock the plates we just locked
@@ -1340,9 +1361,9 @@ void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
             concat_strings(names, "\n")));
     }
     m_plater->get_notification_manager()->close_notification_of_type(NotificationType::ArrangeOngoing);
-    if (m_packing)
+    if (m_packing || m_pack_skipped)
         m_plater->get_notification_manager()->push_notification(NotificationType::BBLPlateInfo,
-            NotificationManager::NotificationLevel::RegularNotificationLevel, done_message(canceled));
+            NotificationManager::NotificationLevel::RegularNotificationLevel, m_packing ? done_message(canceled) : skip_message());
 
     m_plater->m_arrange_running.store(false);
 }
