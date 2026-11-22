@@ -15,6 +15,7 @@
 #include "PrintConfig.hpp"
 #include "BoundingBox.hpp"
 #include "ExPolygon.hpp"
+#include "ClipperUtils.hpp"
 #include "Polygon.hpp"
 #include "Line.hpp"
 #include "Geometry.hpp"
@@ -496,20 +497,30 @@ ArrangePolygon get_instance_arrange_poly(ModelInstance* instance, const Slic3r::
         const Points beside = tree_support ? tree_trunks_beside(*obj, config, ap.poly.contour, support.over_object) : Points{};
         // The polygon reaches past the support by its reach, and the object keeps its own margin.
         Points     points    = std::move(ap.poly.contour.points);
-        const auto keep_room = [&points](const Points &around, double room) {
+        Polygons   support_room; // each ring's hull, for the outline the packer places
+        const auto keep_room = [&points, &support_room](const Points &around, double room) {
             if (around.empty() || room <= 0.)
                 return;
             // Fewer than three points, such as the tip of a sharp tail, have no hull.
             const Polygon hull = Geometry::convex_hull(around);
+            Points        ring;
             for (const Point &pt : hull.empty() ? around : hull.points)
                 for (int i = 0; i < 64; ++i) {
                     const double angle = 2. * PI * i / 64;
-                    points.emplace_back(pt + Point(scaled(room * std::cos(angle)), scaled(room * std::sin(angle))));
+                    ring.emplace_back(pt + Point(scaled(room * std::cos(angle)), scaled(room * std::sin(angle))));
                 }
+            support_room.push_back(Geometry::convex_hull(ring));
+            append(points, std::move(ring));
         };
         keep_room(support.under, reach - ap.brim_width);
         keep_room(beside, tree_room_beside(*obj, config, support_type, support.top) + raft - ap.brim_width);
         ap.poly = ExPolygon(Geometry::convex_hull(std::move(points)));
+        // The packer places the true outline, so it keeps the support's room too. Support that
+        // stands apart from the outline leaves several islands: the packer then takes the hull.
+        if (!ap.outline.empty() && !support_room.empty()) {
+            ExPolygons grown = union_ex(ExPolygons{ap.outline}, support_room);
+            ap.outline       = grown.size() == 1 ? std::move(grown.front()) : ExPolygon();
+        }
     }
 
     ap.height = bbox.size().z();
