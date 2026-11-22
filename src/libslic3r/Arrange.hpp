@@ -4,6 +4,8 @@
 #include "ExPolygon.hpp"
 #include "Point.hpp"
 #include "Polygon.hpp"
+#include <atomic>
+
 #include "PrintConfig.hpp"
 #include "Print.hpp"
 #include <cmath>
@@ -41,6 +43,14 @@ struct InfiniteBed {
     explicit InfiniteBed(const Point &p = {0, 0}): center{p} {}
 };
 
+/// Set by the arrange caller (ArrangeJob, the CLI) before ArrangePolygons are
+/// collected; read by ModelInstance::get_arrange_polygon(), which then also fills
+/// ArrangePolygon::outline. A global because that function has no ArrangeParams.
+extern std::atomic<bool> use_true_outline;
+
+/// Whether this build includes the experimental backend.
+bool sparrow_available();
+
 /// A logical bed representing an object not being arranged. Either the arrange
 /// has not yet successfully run on this ArrangePolygon or it could not fit the
 /// object due to overly large size or invalid geometry.
@@ -57,6 +67,9 @@ static const constexpr int UNARRANGED = -1;
 /// Zero is the physical bed, larger than zero means a virtual bed.
 struct ArrangePolygon {
     ExPolygon poly;                 /// The 2D silhouette to be arranged
+    /// The true 2D outline the sparrow packer places, in the frame of poly. Empty unless
+    /// collected with use_true_outline; the stock arranger always takes poly.
+    ExPolygon outline;
     Vec2crd   translation{0, 0};    /// The translation of the poly
     double    rotation{0.0};        /// The rotation of the poly in radians
     coord_t   inflation = 0;        /// Arrange with inflated polygon
@@ -117,6 +130,9 @@ struct ArrangePolygon {
     /// Test if arrange() was called previously and gave a successful result.
     bool is_arranged() const { return bed_idx != UNARRANGED; }
 
+    /// The shape the sparrow packer places: the true outline when collected, else poly.
+    const ExPolygon &packing_shape() const { return outline.empty() ? poly : outline; }
+
     inline ExPolygon transformed_poly() const
     {
         ExPolygon ret = poly;
@@ -143,6 +159,17 @@ struct ArrangeParams {
     bool parallel = true;
 
     bool allow_rotations = false;
+
+    //BBS: use the sparrow (Rust) packer instead of the libnest2d NFP placer
+    bool  use_sparrow = false;
+    /// Sparrow search budget in seconds, per plate (not for the whole run).
+    float sparrow_time_limit_s = 8.f;
+    /// No libnest2d fallback: a failed sparrow run leaves the arrangables untouched.
+    bool  sparrow_only = false;
+    /// Most filaments sparrow may put on a plate by mixing filament sets; 0 = no limit.
+    int   sparrow_max_filaments_per_plate = 0;
+    /// Every plate prints a prime tower, not just multi-filament ones.
+    bool  prime_tower_always = false;
 
     bool do_final_align = true;
 
@@ -185,7 +212,16 @@ struct ArrangeParams {
         std::cout << "st=" << st << ", " << str << std::endl;
     };
 
+    /// Optional estimated work fraction [0, 1), for progress during Sparrow's search.
+    /// Separate from progressind so object counts remain actual counts.
+    std::function<void(double, std::string)> progress_fraction;
+
     std::function<void(const ArrangePolygon &)> on_packed;
+
+    /// Sparrow only: the best layout so far, one pose per arrangable, called on the
+    /// arrange thread. Items not placed yet have bed_idx UNARRANGED.
+    struct Pose { int bed_idx; Vec2crd translation; double rotation; };
+    std::function<void(const std::vector<Pose> &)> on_layout;
 
     /// A predicate returning true if abort is needed.
     std::function<bool(void)>     stopcondition;
@@ -199,6 +235,8 @@ struct ArrangeParams {
         ret += "\"accuracy\":" + std::to_string(accuracy) + ",";
         ret += "\"parallel\":" + std::to_string(parallel) + ",";
         ret += "\"allow_rotations\":" + std::to_string(allow_rotations) + ",";
+        ret += "\"use_sparrow\":" + std::to_string(use_sparrow) + ",";
+        ret += "\"sparrow_time_limit_s\":" + std::to_string(sparrow_time_limit_s) + ",";
         ret += "\"do_final_align\":" + std::to_string(do_final_align) + ",";
         ret += "\"allow_multi_materials_on_same_plate\":" + std::to_string(allow_multi_materials_on_same_plate) + ",";
         ret += "\"avoid_extrusion_cali_region\":" + std::to_string(avoid_extrusion_cali_region) + ",";
@@ -280,6 +318,16 @@ inline void arrange(ArrangePolygons &items, const BoundingBox &bed, const Arrang
 inline void arrange(ArrangePolygons &items, const CircleBed &bed, const ArrangeParams &params = {}) { arrange(items, {}, bed, params); }
 inline void arrange(ArrangePolygons &items, const Polygon &bed, const ArrangeParams &params = {}) { arrange(items, {}, bed, params); }
 inline void arrange(ArrangePolygons &items, const InfiniteBed &bed, const ArrangeParams &params = {}) { arrange(items, {}, bed, params); }
+
+// Measures of an arrange result, used to compare a stock result with a packed one.
+// Plates in use: those holding selected or fixed parts; for a plate arrange (only plate 0
+// is arranged) the parts sent off it. Virtual items are ignored.
+int count_plates_used(const ArrangePolygons &selected, const ArrangePolygons &unselected, bool only_on_partplate);
+// Parts left without a plate (bed_idx < 0); 0 for a plate arrange, which score covers.
+int count_unplaced(const ArrangePolygons &items, bool only_on_partplate);
+// Outline area over convex hull area of the real parts: how much room hull packing wastes.
+// Returns 1 when there is nothing to measure.
+double outline_hull_ratio(const ArrangePolygons &items, double *outline_area = nullptr);
 
 }} // namespace Slic3r::arrangement
 
