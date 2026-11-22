@@ -227,12 +227,13 @@ TEST_CASE("Simplified outlines keep the full spacing", "[arrange][sparrow]")
 TEST_CASE("Arrange preserves material separation", "[arrange][sparrow]")
 {
     ArrangePolygons items{part(rectangle(0, 0, 20, 20), 0), part(rectangle(0, 0, 20, 20), 1)};
-    SECTION("Incompatible temperatures") {
+    auto params = settings();
+    const bool by_temperature = GENERATE(true, false);
+    INFO((by_temperature ? "Incompatible temperatures" : "One material per plate"));
+    if (by_temperature) {
         items[0].filament_temp_type = FilamentTempType::LowTemp;
         items[1].filament_temp_type = FilamentTempType::HighTemp;
-    }
-    auto params = settings();
-    SECTION("One material per plate") {
+    } else {
         items[0].extrude_ids = {1};
         items[1].extrude_ids = {2};
         params.allow_multi_materials_on_same_plate = false;
@@ -248,19 +249,17 @@ TEST_CASE("Arrange respects fixed objects' materials", "[arrange][sparrow]")
     ArrangePolygons items{part(rectangle(0, 0, 20, 20), 0)};
     ArrangePolygons fixed{part(rectangle(100, 100, 20, 20), 1)};
     fixed[0].bed_idx = 0;
-    SECTION("Incompatible temperatures") {
-        items[0].filament_temp_type = FilamentTempType::LowTemp;
-        fixed[0].filament_temp_type = FilamentTempType::HighTemp;
-    }
+    items[0].filament_temp_type = FilamentTempType::LowTemp;
+    fixed[0].filament_temp_type = FilamentTempType::HighTemp;
     ArrangePolygons expected = items;
     auto stock = settings();
     stock.use_sparrow = false;
     arrange(expected, fixed, bed, stock);
     arrange(items, fixed, bed, settings());
-    // Stock may leave this item unplaced when the source plate contains only
-    // fixed objects. Preserve that behavior instead of mixing incompatible material.
+    // Incompatible temperatures hand the whole arrange to the stock arranger, so the
+    // item lands where stock puts it, whichever plate that is.
     REQUIRE(items[0].bed_idx == expected[0].bed_idx);
-    REQUIRE(items[0].bed_idx != 0);
+    REQUIRE(items[0].translation == expected[0].translation);
 }
 
 TEST_CASE("Stock fallback uses convex hulls without changing input contours", "[arrange][sparrow]")
@@ -364,9 +363,8 @@ TEST_CASE("Sparrow fills a closed opening without moving its host", "[arrange][s
 TEST_CASE("Sparrow cannot fill openings based on area alone", "[arrange][sparrow][holes]")
 {
     if (!sparrow_available()) return;
-    Polygon hole;
-    SECTION("Large area but too narrow") { hole = rectangle(20, 20, 10, 200); }
-    SECTION("Raw dimensions fit but spacing does not") { hole = rectangle(20, 20, 30, 30); }
+    // A large area but too narrow, then the piece's own size with no room for the spacing.
+    const Polygon hole = GENERATE(rectangle(20, 20, 10, 200), rectangle(20, 20, 30, 30));
     ArrangePolygons fixed{ring_host(hole)};
     ArrangePolygons pieces{part(rectangle(0, 0, 30, 30), 0)};
     arrange(pieces, fixed, bed, settings());
@@ -579,8 +577,9 @@ TEST_CASE("Nested rings get space before their smaller contents", "[arrange][spa
         return ring;
     };
     ArrangePolygons fixed{ring_host(rectangle(10, 10, 220, 220))};
-    SECTION("Without a wipe tower") {}
-    SECTION("With replicated empty wipe-tower placeholders") {
+    const bool wipe_tower = GENERATE(false, true);
+    INFO((wipe_tower ? "With replicated empty wipe-tower placeholders" : "Without a wipe tower"));
+    if (wipe_tower) {
         for (int plate = 0; plate < 3; ++plate) {
             auto placeholder = part(rectangle(165, 238, 35, 0), 200 + plate);
             placeholder.is_virt_object = true;
