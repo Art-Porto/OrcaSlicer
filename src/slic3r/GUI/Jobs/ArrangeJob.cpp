@@ -1252,6 +1252,11 @@ void ArrangeJob::apply_result(ArrangePolygons &selected, ArrangePolygons &unsele
     // BBS: update slice context and gcode result.
     m_plater->update_slicing_context_to_current_partplate();
 
+    // rebuild_plates_after_arrangement() sorted the objects by arrange order, so the selected
+    // GLVolumes still carry the old object indices, which the object list reads to restore the
+    // selection. Reload now, also when the 3D view is hidden, to renumber them.
+    m_plater->get_view3D_canvas3D()->reload_scene(true);
+
     wxGetApp().obj_list()->reload_all_plates();
 
     m_plater->update();
