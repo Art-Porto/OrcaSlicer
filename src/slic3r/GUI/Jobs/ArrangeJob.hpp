@@ -9,6 +9,7 @@
 #include <memory>
 #include <utility>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,7 @@
 #include "libslic3r/Geometry.hpp"
 #include "libslic3r/Point.hpp"
 #include "libslic3r/IMEXArrange.hpp"
+#include "libslic3r/ObjectID.hpp"
 
 namespace Slic3r {
 
@@ -98,7 +100,15 @@ class ArrangeJob : public Job
     // prepare(), which finalize() restores before applying the result.
     ArrangePolygons m_live_aps;
     std::vector<arrangement::ArrangeParams::Pose> m_live_stock; // where parts wait until sparrow takes them
-    std::vector<std::pair<ModelInstance *, Geometry::Transformation>> m_live_restore;
+    // An instance as prepare() found it. Its id is checked before the pointer is used: nothing
+    // stops an edit during the job, and a new instance may take a deleted one's address.
+    struct LiveInstance
+    {
+        ModelInstance           *instance;
+        ObjectID                 id;
+        Geometry::Transformation trafo;
+    };
+    std::vector<LiveInstance> m_live_restore;
     // Prime tower state as prepare() found it; restore_live() puts it back with the parts.
     std::vector<double> m_live_tower_x, m_live_tower_y;
     std::vector<Vec2d>  m_live_tower_pos;
@@ -108,6 +118,8 @@ class ArrangeJob : public Job
     std::shared_ptr<std::atomic<bool>> m_live_alive;
     void apply_live(const std::vector<arrangement::ArrangeParams::Pose> &poses);
     void restore_live();
+    // The instances of m_live_restore still in the model.
+    std::set<const ModelInstance *> live_instances() const;
 
     // clear m_selected and m_unselected, reserve space for next usage
     void clear_input();
