@@ -713,8 +713,9 @@ void ArrangeJob::prepare()
 
     params = init_arrange_params(m_plater);
 
-    // The packer runs as a second pass after the stock arrange (pack_tighter()); the stock
-    // arrange takes the convex hulls of the outlines collected for it.
+    // The packer runs as a second pass after the stock arrange (pack_tighter()). The stock
+    // arrange takes the same convex hulls as with the packer off, the packer the outlines
+    // collected next to them.
     m_pack_eligible = params.use_sparrow;
     params.use_sparrow = false;
     m_packing          = false;

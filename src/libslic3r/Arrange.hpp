@@ -44,8 +44,8 @@ struct InfiniteBed {
 };
 
 /// Set by the arrange caller (ArrangeJob, the CLI) before ArrangePolygons are
-/// collected; read by ModelInstance::get_arrange_polygon() to choose between the
-/// convex hull and the true outline. A global because that function has no ArrangeParams.
+/// collected; read by ModelInstance::get_arrange_polygon(), which then also fills
+/// ArrangePolygon::outline. A global because that function has no ArrangeParams.
 extern std::atomic<bool> use_true_outline;
 
 /// Whether this build includes the experimental backend.
@@ -67,6 +67,9 @@ static const constexpr int UNARRANGED = -1;
 /// Zero is the physical bed, larger than zero means a virtual bed.
 struct ArrangePolygon {
     ExPolygon poly;                 /// The 2D silhouette to be arranged
+    /// The true 2D outline the sparrow packer places, in the frame of poly. Empty unless
+    /// collected with use_true_outline; the stock arranger always takes poly.
+    ExPolygon outline;
     Vec2crd   translation{0, 0};    /// The translation of the poly
     double    rotation{0.0};        /// The rotation of the poly in radians
     coord_t   inflation = 0;        /// Arrange with inflated polygon
@@ -122,6 +125,9 @@ struct ArrangePolygon {
 
     /// Test if arrange() was called previously and gave a successful result.
     bool is_arranged() const { return bed_idx != UNARRANGED; }
+
+    /// The shape the sparrow packer places: the true outline when collected, else poly.
+    const ExPolygon &packing_shape() const { return outline.empty() ? poly : outline; }
 
     inline ExPolygon transformed_poly() const
     {

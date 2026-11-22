@@ -4214,11 +4214,7 @@ void ModelInstance::get_arrange_polygon(void *ap, const Slic3r::DynamicPrintConf
     Geometry::Transformation t(m_transformation);
     t.set_offset(get_offset().z() * Vec3d::UnitZ());
     t.set_rotation(rotation);
-    // BBS: the sparrow packer places concave outlines, so give it the real 2D
-    // silhouette instead of the convex hull. Same trafo and item-local frame.
-    ExPolygon p = arrangement::sparrow_available() && arrangement::use_true_outline.load(std::memory_order_relaxed)
-                      ? true_outline_2d_ex(t.get_matrix())
-                      : ExPolygon(get_object()->convex_hull_2d(t.get_matrix()));
+    Polygon p = get_object()->convex_hull_2d(t.get_matrix());
 
 //    if (!p.points.empty()) {
 //        Polygons pp{p};
@@ -4227,7 +4223,12 @@ void ModelInstance::get_arrange_polygon(void *ap, const Slic3r::DynamicPrintConf
 //    }
 
     arrangement::ArrangePolygon& ret = *(arrangement::ArrangePolygon*)ap;
-    ret.poly         = std::move(p);
+    ret.poly.contour = std::move(p);
+    // BBS: the sparrow packer places concave outlines, so give it the real 2D silhouette
+    // too, in the same frame. The stock arranger keeps the convex hull, so a stock
+    // arrange is the same whether or not the packer runs after it.
+    if (arrangement::sparrow_available() && arrangement::use_true_outline.load(std::memory_order_relaxed))
+        ret.outline = true_outline_2d_ex(t.get_matrix());
     ret.translation  = Vec2crd{scaled(get_offset(X)), scaled(get_offset(Y))};
     ret.rotation     = get_rotation(Z);
 

@@ -142,7 +142,7 @@ coord_t fixed_inflation(const ArrangePolygon &ap)
 
 Polygon world_contour(const ArrangePolygon &ap)
 {
-    Polygon w = ap.poly.contour;
+    Polygon w = ap.packing_shape().contour;
     w.rotate(ap.rotation);
     w.translate(ap.translation.x(), ap.translation.y());
     return w;
@@ -309,9 +309,9 @@ bool arrange_sparrow(ArrangePolygons &      arrangables,
     auto store_shape = [&](const ArrangePolygon &ap, coord_t infl, const Point &origin,
                            sp_item &it, double *area_mm2 = nullptr) -> bool {
         ExPolygon expanded;
-        if (!inflate_expolygon(ap.poly, infl, expanded))
+        if (!inflate_expolygon(ap.packing_shape(), infl, expanded))
             return false;
-        simplify_inflated(ap.poly, infl, expanded); // keeps the full outline if it cannot
+        simplify_inflated(ap.packing_shape(), infl, expanded); // keeps the full outline if it cannot
         shape_store.emplace_back();
         SparrowShapeStorage &storage = shape_store.back();
         storage.outline = to_sp_points(expanded.contour, origin);
@@ -542,7 +542,7 @@ bool arrange_sparrow(ArrangePolygons &      arrangables,
         ap.rotation    = out[k].rotation;
 
         // Raw footprint in bed coordinates for the bed and hole checks.
-        Polygon w = ap.poly.contour;
+        Polygon w = ap.packing_shape().contour;
         w.rotate(ap.rotation);
         w.translate(ap.translation.x() - bed_min.x(), ap.translation.y() - bed_min.y());
         const BoundingBox wb = w.bounding_box();

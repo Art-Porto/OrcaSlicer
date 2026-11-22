@@ -1453,8 +1453,9 @@ double outline_hull_ratio(const ArrangePolygons &items, double *outline_area)
     for (const ArrangePolygon &ap : items) {
         if (ap.is_virt_object)
             continue;
-        hull += Geometry::convex_hull(ap.poly.contour.points).area();
-        outline += ap.poly.area(); // openings count as free space
+        const ExPolygon &shape = ap.packing_shape();
+        hull += Geometry::convex_hull(shape.contour.points).area();
+        outline += shape.area(); // openings count as free space
     }
     if (outline_area)
         *outline_area = outline;

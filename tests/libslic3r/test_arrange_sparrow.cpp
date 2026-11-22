@@ -427,14 +427,51 @@ TEST_CASE("Projected openings reach Arrange and close when covered by geometry",
     DynamicPrintConfig config;
     ArrangePolygon first;
     instance->get_arrange_polygon(&first, config);
-    REQUIRE(first.poly.holes.size() == 1);
-    REQUIRE(std::abs(first.poly.holes.front().area()) * SCALING_FACTOR * SCALING_FACTOR == Approx(160. * 160.));
+    REQUIRE(first.outline.holes.size() == 1);
+    REQUIRE(std::abs(first.outline.holes.front().area()) * SCALING_FACTOR * SCALING_FACTOR == Approx(160. * 160.));
+    // The stock arranger keeps the convex hull it gets with the packer off.
+    CHECK(first.poly.holes.empty());
+    CHECK(first.poly.area() * SCALING_FACTOR * SCALING_FACTOR == Approx(200. * 200.));
     // A later volume change must invalidate the cached opening. Even a thin
     // ceiling would make the projected opening unsafe for another printed part.
     add_box(20, 20, 160, 160);
     ArrangePolygon covered;
     instance->get_arrange_polygon(&covered, config);
-    REQUIRE(covered.poly.holes.empty());
+    REQUIRE(covered.outline.holes.empty());
+}
+
+TEST_CASE("The stock arranger gets the same polygon with the packer on", "[arrange][sparrow]")
+{
+    if (!sparrow_available()) return;
+    Model model;
+    auto *object = model.add_object();
+    // An L, whose outline is not its hull.
+    auto add_box = [&](double x, double y, double w, double h) {
+        auto mesh = make_cube(w, h, 10.);
+        mesh.translate(x, y, 0.);
+        object->add_volume(mesh, false);
+    };
+    add_box(0, 0, 60, 20);
+    add_box(0, 20, 20, 40);
+    auto *instance = object->add_instance();
+    instance->set_rotation(Z, 0.3);
+    DynamicPrintConfig config;
+
+    const bool previous = use_true_outline.exchange(false);
+    ArrangePolygon off;
+    instance->get_arrange_polygon(&off, config);
+    use_true_outline.store(true);
+    ArrangePolygon on;
+    instance->get_arrange_polygon(&on, config);
+    use_true_outline.store(previous);
+
+    CHECK(off.outline.empty());
+    CHECK(on.poly.contour.points == off.poly.contour.points);
+    CHECK(on.rotation == off.rotation);
+    REQUIRE(!on.outline.empty());
+    // The packer gets the L itself: 60x20 + 20x40, not the hull.
+    CHECK(on.outline.area() * SCALING_FACTOR * SCALING_FACTOR == Approx(60. * 20. + 20. * 40.).epsilon(0.01));
+    CHECK(on.outline.area() < on.poly.area());
 }
 
 TEST_CASE("Cancelling before hole cleanup preserves the completed placement", "[arrange][sparrow][holes]")
