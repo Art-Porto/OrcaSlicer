@@ -800,7 +800,7 @@ void ArrangeJob::prepare()
         m_live_aps = m_selected;
         for (ModelObject *mo : m_plater->model().objects)
             for (ModelInstance *mi : mo->instances)
-                m_live_restore.emplace_back(mi, mi->get_transformation());
+                m_live_restore.push_back({mi, mi->id(), mi->get_transformation()});
         DynamicConfig &proj_cfg = wxGetApp().preset_bundle->project_config;
         const auto    *wtx      = proj_cfg.opt<ConfigOptionFloats>("wipe_tower_x");
         const auto    *wty      = proj_cfg.opt<ConfigOptionFloats>("wipe_tower_y");
@@ -898,15 +898,12 @@ void ArrangeJob::pack_tighter(Ctl &ctl, ArrangePolygons &selected, const Points 
     ctl.update_status(0, _u8L("Packing tighter..."));
 
     // Show the stock result first, held for a moment before sparrow's layouts replace it.
-    // The stock arranger may reorder its items, so poses follow m_live_aps by item id.
-    std::map<int, const ArrangePolygon *> stock_by_id;
-    for (const ArrangePolygon &ap : m_selected)
-        stock_by_id[ap.itemid] = &ap;
+    // By index: the stock arranger keeps the order of m_live_aps but renumbers itemid by
+    // packing order.
     std::vector<arrangement::ArrangeParams::Pose> stock;
-    for (const ArrangePolygon &ap : m_live_aps) {
-        const auto it = stock_by_id.find(ap.itemid);
-        stock.push_back(it == stock_by_id.end() ? arrangement::ArrangeParams::Pose{ap.bed_idx, ap.translation, ap.rotation}
-                                                : arrangement::ArrangeParams::Pose{it->second->bed_idx, it->second->translation, it->second->rotation});
+    for (size_t i = 0; i < m_live_aps.size(); ++i) {
+        const ArrangePolygon &ap = i < m_selected.size() ? m_selected[i] : m_live_aps[i];
+        stock.push_back({ap.bed_idx, ap.translation, ap.rotation});
     }
     const std::shared_ptr<std::atomic<bool>> alive = m_live_alive;
     wxGetApp().CallAfter([this, alive, stock] {
@@ -947,7 +944,7 @@ void ArrangeJob::pack_tighter(Ctl &ctl, ArrangePolygons &selected, const Points 
     };
     arrangement::arrange(selected, m_unselected, bedpts, pack);
     // Stock places sparrow's leftovers around tower placeholders too, so they get the same retry.
-    if (!ctl.was_canceled() && !only_on_partplate && !wipe_tower_is_mandatory())
+    if (!ctl.was_canceled() && !only_on_partplate && !params.prime_tower_always)
         retry_unfit_single_color_items(selected, m_unselected, bedpts, params);
 
     // Fewer parts left out wins, then fewer plates. A stop falls back to the stock result.
@@ -1037,7 +1034,7 @@ void ArrangeJob::process(Ctl &ctl)
         imex.finish(m_selected, before, m_unselected, params);
 
     // Parts squeezed out by a tower placeholder get a second chance on tower-free plates.
-    if (!ctl.was_canceled() && !only_on_partplate && !params.is_seq_print && !params.is_belt && !wipe_tower_is_mandatory())
+    if (!ctl.was_canceled() && !only_on_partplate && !params.is_seq_print && !params.is_belt && !params.prime_tower_always)
         retry_unfit_single_color_items(m_selected, m_unselected, bedpts, params);
 
     m_stock_score    = score(m_selected, m_unselected);
@@ -1091,15 +1088,26 @@ static std::string concat_strings(const std::set<std::string> &strings,
         });
 }
 
+std::set<const ModelInstance *> ArrangeJob::live_instances() const
+{
+    std::map<const ModelInstance *, ObjectID> present;
+    for (const ModelObject *mo : m_plater->model().objects)
+        for (const ModelInstance *mi : mo->instances)
+            present.emplace(mi, mi->id());
+    std::set<const ModelInstance *> alive;
+    for (const LiveInstance &live : m_live_restore)
+        if (const auto it = present.find(live.instance); it != present.end() && it->second == live.id)
+            alive.insert(live.instance);
+    return alive;
+}
+
 void ArrangeJob::restore_live()
 {
-    // Nothing stops an edit during the job, so skip instances deleted since prepare().
-    std::set<const ModelInstance *> alive;
-    for (const ModelObject *mo : m_plater->model().objects)
-        alive.insert(mo->instances.begin(), mo->instances.end());
-    for (auto &[instance, trafo] : m_live_restore)
-        if (alive.count(instance))
-            instance->set_transformation(trafo);
+    // Skip instances deleted since prepare().
+    const std::set<const ModelInstance *> alive = live_instances();
+    for (const LiveInstance &live : m_live_restore)
+        if (alive.count(live.instance))
+            live.instance->set_transformation(live.trafo);
 
     // Prime towers too: applying a layout can move them (new plates, exclusion zones).
     PartPlateList &plates = m_plater->get_partplate_list();
@@ -1124,7 +1132,9 @@ void ArrangeJob::restore_live()
 // adds its rotation to the instance's current one.
 void ArrangeJob::apply_live(const std::vector<arrangement::ArrangeParams::Pose> &poses)
 {
-    if (!m_live_open || poses.size() != m_live_aps.size())
+    // A part deleted meanwhile: its setter would write into the freed instance. The cancel
+    // that came with the deletion ends the preview.
+    if (!m_live_open || poses.size() != m_live_aps.size() || live_instances().size() != m_live_restore.size())
         return;
     m_live_used = true;
     restore_live();
@@ -1303,7 +1313,11 @@ void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
     }
 
     // A cancel while the packer runs keeps the stock result, which m_selected still holds.
-    if ((canceled && !m_packing) || eptr) {
+    // Nothing applies once parts were deleted meanwhile (Delete, Delete all, New project
+    // cancel the job but free the instances at once): the setters of m_selected would write
+    // into them.
+    const bool instances_intact = live_instances().size() == m_live_restore.size();
+    if ((canceled && !m_packing) || !instances_intact || eptr) {
         if (m_live_used) {
             // The preview may have added plates; recycle the empty ones.
             if (!only_on_partplate)
@@ -1327,16 +1341,7 @@ void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
     // The stock result first, as its own undo step: undo goes packed -> stock -> before.
     // Not with locked or skipped plates: applying unlocks those, and a second apply would
     // then map beds onto them.
-    // Nor when the user deleted a part meanwhile: restore_live() could not bring it back.
-    bool instances_intact = true;
-    {
-        std::set<const ModelInstance *> present;
-        for (const ModelObject *mo : m_plater->model().objects)
-            present.insert(mo->instances.begin(), mo->instances.end());
-        for (const auto &entry : m_live_restore)
-            instances_intact = instances_intact && present.count(entry.first);
-    }
-    if (m_packed_score >= 0 && instances_intact && m_locked.empty() && m_uncompatible_plates.empty()) {
+    if (m_packed_score >= 0 && m_locked.empty() && m_uncompatible_plates.empty()) {
         ArrangePolygons unselected = m_unselected, locked = m_locked, unprintable = m_unprintable;
         apply_result(m_stock_selected, unselected, locked, unprintable);
         m_plater->take_snapshot(_u8L("Pack tighter"));
