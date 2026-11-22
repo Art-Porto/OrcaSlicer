@@ -1929,6 +1929,42 @@ TEST_CASE("Sequential printing counts a raft toward whether an object is short",
         CHECK(error.empty());
 }
 
+TEST_CASE("Printing by layer warns of parts too close only where their outlines meet", "[Print][validate]")
+{
+    // A C-shaped part, 40 x 40 mm with 10 mm bars, opens towards +X. A 10 mm cube in its opening
+    // lies inside the part's convex hull but 5 mm clear of both bars; at y 105 it overlaps the lower bar.
+    const auto [cube_y, overlaps] = GENERATE(table<float, bool>({ { 115.f, false }, { 105.f, true } }));
+    TriangleMesh c_shape = make_cube(10, 40, 10); // the back bar
+    c_shape.translate(100.f, 100.f, 0.f);
+    for (const float bar_y : { 100.f, 130.f }) {  // the lower and upper bars
+        TriangleMesh bar = make_cube(40, 10, 10);
+        bar.translate(100.f, bar_y, 0.f);
+        c_shape.merge(bar);
+    }
+    TriangleMesh cube = make_cube(10, 10, 10);
+    cube.translate(122.f, cube_y, 0.f);
+    std::vector<TriangleMesh> meshes;
+    meshes.push_back(std::move(c_shape));
+    meshes.push_back(std::move(cube));
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({
+        { "print_sequence",     "by layer" },
+        { "layer_change_gcode", "G92 E0\n" } // validate() relative-E reset
+    });
+    Print print;
+    Model model;
+    Test::init_print(std::move(meshes), print, model, config, nullptr, /*arrange=*/false);
+
+    std::vector<StringObjectException> warnings;
+    const std::string error = print.validate(&warnings).string;
+    INFO(error);
+    CHECK(error.empty());
+    const bool too_close = std::any_of(warnings.begin(), warnings.end(), [](const StringObjectException &warning) {
+        return warning.string.find("too close to others") != std::string::npos;
+    });
+    CHECK(too_close == overlaps);
+}
+
 TEST_CASE("Sequential printing measures objects on a belt printer by the model's top", "[Print][belt]")
 {
     // On a belt printer object_print_z_max is the height in the tilted slicing frame: at 45 degrees a 30 mm

@@ -1693,6 +1693,26 @@ static StringObjectException layered_print_cleareance_valid(const Print &print, 
     }
 
     Polygons convex_hulls_other;
+    // Hulls also cross where a part sits in another's concavity or opening, as the experimental
+    // packer places them. There only the true outlines tell whether the parts meet, so each
+    // instance checked keeps its hulls, and its outline once one is needed.
+    struct CheckedInstance
+    {
+        const PrintInstance *instance;
+        Polygons             hulls;
+        ExPolygons           outline;
+    };
+    std::vector<CheckedInstance> instances_other;
+    auto outline_of = [](CheckedInstance &checked) -> const ExPolygons & {
+        if (checked.outline.empty()) {
+            const PrintInstance &inst = *checked.instance;
+            ExPolygon outline = inst.print_object->model_object()->true_outline_2d_ex(Geometry::assemble_transform(Vec3d::Zero(),
+                inst.model_instance->get_rotation(), inst.model_instance->get_scaling_factor(), inst.model_instance->get_mirror()));
+            outline.translate(inst.shift - inst.print_object->center_offset());
+            checked.outline.emplace_back(std::move(outline));
+        }
+        return checked.outline;
+    };
     // Orca: check convex hull intersection for each instance individually
     for (auto& inst : print_instances_ordered) {
         Polygons current_instance_hulls;
@@ -1722,7 +1742,13 @@ static StringObjectException layered_print_cleareance_valid(const Print &print, 
             return {message + "\n", inst->model_instance};
         }
 
-        if (!intersection(convex_hulls_other, current_instance_hulls).empty()) {
+        CheckedInstance current{inst, current_instance_hulls, {}};
+        const bool too_close = !intersection(convex_hulls_other, current_instance_hulls).empty() &&
+            std::any_of(instances_other.begin(), instances_other.end(), [&](CheckedInstance &other) {
+                return !intersection(other.hulls, current.hulls).empty() &&
+                       !intersection_ex(outline_of(other), outline_of(current)).empty();
+            });
+        if (too_close) {
             if (warning) {
                 if (warning->string.empty()) {
                     warning->string = (boost::format(L("%1% is too close to others, and collisions may be caused.")) % inst->model_instance->get_object()->name).str();
@@ -1738,7 +1764,8 @@ static StringObjectException layered_print_cleareance_valid(const Print &print, 
                 warning->type = STRING_EXCEPT_OBJECT_COLLISION_IN_LAYER_PRINT;
             }
         }
-        append(convex_hulls_other, current_instance_hulls);
+        append(convex_hulls_other, std::move(current_instance_hulls));
+        instances_other.emplace_back(std::move(current));
     }
 
     //BBS: add the wipe tower check logic
