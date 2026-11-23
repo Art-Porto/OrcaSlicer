@@ -1897,8 +1897,14 @@ static StringObjectException layered_print_cleareance_valid(const Print &print, 
         tower_polys_estimated = offset(base, float(scale_(brim_width)));
     }
     // Object proximity stays a body-only warning: brim near-misses would newly warn on
-    // many setups that print fine.
-    if (!intersection(convex_hulls_other, convex_hulls_temp).empty()) {
+    // many setups that print fine. A part placed around the tower has it inside its hull,
+    // so only the part's true outline tells whether they meet.
+    const bool tower_too_close = !intersection(convex_hulls_other, convex_hulls_temp).empty() &&
+        std::any_of(instances_other.begin(), instances_other.end(), [&](CheckedInstance &other) {
+            return !intersection(other.hulls, convex_hulls_temp).empty() &&
+                   !intersection_ex(outline_of(other), convex_hulls_temp).empty();
+        });
+    if (tower_too_close) {
         if (warning) {
             warning->string += L("Prime tower is too close to others, and collisions may be caused.\n");
         }
