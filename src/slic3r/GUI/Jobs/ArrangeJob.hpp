@@ -93,8 +93,11 @@ class ArrangeJob : public Job
     std::string done_message(bool canceled) const;
     void        pack_tighter(Ctl &ctl, ArrangePolygons &selected, const Points &bedpts);
     void        apply_result(ArrangePolygons &selected, ArrangePolygons &unselected, ArrangePolygons &locked, ArrangePolygons &unprintable);
+    void        drop_added_plates();
 
     ArrangePolygons m_stock_selected; // kept for the undo step
+    // By bed: the prime tower the packer keeps clear, sized for any parts the plate may get.
+    std::map<int, ArrangePolygon> m_pack_towers;
 
     // Live view of the sparrow phase. Applied from the transformations saved in
     // prepare(), which finalize() restores before applying the result.

@@ -3368,6 +3368,55 @@ TEST_CASE("No sparse layers counts a raft toward whether an object near the towe
         CHECK(error.empty());
 }
 
+// A part placed around the prime tower has the tower inside its convex hull.
+TEST_CASE("Printing by layer warns of the prime tower too close only where a part's outline meets it", "[Print][PrimeTower]")
+{
+    // The tower stands in the opening of a C-shaped part on filament 1, 5 mm clear of its 10 mm bars.
+    // Raised by 10 mm, the lower bar crosses the tower.
+    const auto [raise, overlaps] = GENERATE(table<float, bool>({ { 0.f, false }, { 10.f, true } }));
+    const float tower_x = 100.f, tower_y = 100.f, gap = 5.f, bar = 10.f, height = 10.f;
+    const DynamicPrintConfig config = prime_tower_config({ { "wipe_tower_x", tower_x }, { "wipe_tower_y", tower_y } });
+    auto add_part_on_filament_2 = [&](Model &model) {
+        add_object(model, make_cube(bar, bar, height), 20., 20.)->config.set_key_value("extruder", new ConfigOptionInt(2));
+    };
+
+    // The estimate sizes the tower by the filaments and the tallest part, which the C-shaped part leaves as they are.
+    float width = 0.f, depth = 0.f;
+    {
+        Model model;
+        add_object(model, make_cube(bar, bar, height), 20., 160.);
+        add_part_on_filament_2(model);
+        Print print;
+        print.apply(model, config);
+        width = print.wipe_tower_data(2).width;
+        depth = print.wipe_tower_data(2).depth;
+    }
+    REQUIRE(width > 0.f);
+    REQUIRE(depth > 0.f);
+
+    TriangleMesh c_shape = make_cube(bar, depth + 2.f * (gap + bar), height); // the back bar, behind the tower
+    c_shape.translate(tower_x + width + gap, tower_y - gap - bar + raise, 0.f);
+    for (const float bar_y : { tower_y - gap - bar, tower_y + depth + gap }) { // the lower and upper bars
+        TriangleMesh side = make_cube(width + 2.f * gap + bar, bar, height);
+        side.translate(tower_x - gap, bar_y + raise, 0.f);
+        c_shape.merge(side);
+    }
+    Model model;
+    add_object(model, std::move(c_shape), 0., 0.);
+    add_part_on_filament_2(model);
+    Print print;
+    print.apply(model, config);
+
+    std::vector<StringObjectException> warnings;
+    const std::string error = print.validate(&warnings).string;
+    INFO(error);
+    CHECK(error.empty());
+    const bool too_close = std::any_of(warnings.begin(), warnings.end(), [](const StringObjectException &warning) {
+        return warning.string.find("Prime tower is too close to others") != std::string::npos;
+    });
+    CHECK(too_close == overlaps);
+}
+
 TEST_CASE("An object takes the layer height limits of the extruder of its own filament", "[Print]")
 {
     CHECK_THAT(slicing_parameters_on_filament(1).max_layer_height, Catch::Matchers::WithinAbs(0.32, EPSILON));

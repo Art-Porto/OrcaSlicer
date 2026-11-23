@@ -419,7 +419,7 @@ void ArrangeJob::prepare_all() {
     prepare_belt_regions(MAX_NUM_PLATES);
 }
 
-arrangement::ArrangePolygon estimate_wipe_tower_info(int plate_index, std::set<int>& extruder_ids)
+arrangement::ArrangePolygon estimate_wipe_tower_info(int plate_index, std::set<int>& extruder_ids, bool use_global_objects = false)
 {
     PartPlateList& ppl = wxGetApp().plater()->get_partplate_list();
     const auto& full_config = wxGetApp().preset_bundle->full_config();
@@ -430,7 +430,8 @@ arrangement::ArrangePolygon estimate_wipe_tower_info(int plate_index, std::set<i
     int extruder_size = extruder_ids.size();
 
     Vec3d wipe_tower_size, wipe_tower_pos;
-    auto arrange_poly = ppl.get_plate(plate_index_valid)->estimate_wipe_tower_polygon(full_config, plate_index, wipe_tower_pos, wipe_tower_size, extruder_size);
+    auto arrange_poly = ppl.get_plate(plate_index_valid)->estimate_wipe_tower_polygon(full_config, plate_index, wipe_tower_pos, wipe_tower_size, extruder_size,
+                                                                                      use_global_objects);
     arrange_poly.bed_idx = plate_index;
     return arrange_poly;
 }
@@ -577,12 +578,14 @@ void ArrangeJob::prepare_wipe_tower()
         extruder_ids = ppl.get_extruders(true);
     }
 
+    m_pack_towers.clear();
     int bedid_unlocked = 0;
     for (int bedid = 0; bedid < MAX_NUM_PLATES; bedid++) {
         int plate_index_valid = std::min(bedid, plate_count - 1);
         PartPlate* pl = ppl.get_plate(plate_index_valid);
         if(bedid<plate_count && pl->is_locked())
             continue;
+        bool has_tower = true;
         if (auto wti = get_wipe_tower(*m_plater, bedid)) {
             // wipe tower is already there
             wipe_tower_ap = get_wipetower_arrange_poly(&wti);
@@ -598,6 +601,21 @@ void ArrangeJob::prepare_wipe_tower()
             wipe_tower_ap = estimate_wipe_tower_info(bedid, extruder_ids);
             wipe_tower_ap.bed_idx = bedid_unlocked;
             m_unselected.emplace_back(wipe_tower_ap);
+        }
+        else
+            has_tower = false;
+        // The tower above is sized for the parts on the plate now. The stock arranger leaves
+        // room around it, which the tower takes when the arranged parts make it bigger: a
+        // taller part, or a thinner layer. The packer fills that room, so it keeps clear of the
+        // tower that the tallest part and the thinnest layer of the whole model would need.
+        if (has_tower && m_pack_eligible && !only_on_partplate) {
+            BoundingBox reserved = get_extents(wipe_tower_ap.transformed_poly());
+            reserved.merge(get_extents(estimate_wipe_tower_info(bedid, extruder_ids, true).transformed_poly()));
+            ArrangePolygon tower = wipe_tower_ap;
+            tower.poly        = ExPolygon(reserved.polygon());
+            tower.translation = Point(0, 0);
+            tower.rotation    = 0.;
+            m_pack_towers[bedid_unlocked] = std::move(tower);
         }
         bedid_unlocked++;
     }
@@ -942,10 +960,19 @@ void ArrangeJob::pack_tighter(Ctl &ctl, ArrangePolygons &selected, const Points 
                 apply_live(poses);
         });
     };
-    arrangement::arrange(selected, m_unselected, bedpts, pack);
+    // Towers as big as the parts sparrow may put on their plates can make them.
+    ArrangePolygons unselected = m_unselected;
+    for (ArrangePolygon &ap : unselected)
+        if (ap.is_wipe_tower)
+            if (auto tower = m_pack_towers.find(ap.bed_idx); tower != m_pack_towers.end()) {
+                ap.poly        = tower->second.poly;
+                ap.translation = tower->second.translation;
+                ap.rotation    = tower->second.rotation;
+            }
+    arrangement::arrange(selected, unselected, bedpts, pack);
     // Stock places sparrow's leftovers around tower placeholders too, so they get the same retry.
     if (!ctl.was_canceled() && !only_on_partplate && !params.prime_tower_always)
-        retry_unfit_single_color_items(selected, m_unselected, bedpts, params);
+        retry_unfit_single_color_items(selected, unselected, bedpts, params);
 
     // Fewer parts left out wins, then fewer plates. A stop falls back to the stock result.
     const int packed = score(selected, m_unselected), packed_unplaced = unplaced(selected);
@@ -1270,11 +1297,8 @@ void ArrangeJob::apply_result(ArrangePolygons &selected, ArrangePolygons &unsele
     }
     else {
         plate_list.rebuild_plates_after_arrangement(false, true);
-        // The live view of the packer, and the stock result applied before the packed one,
-        // may add plates that this result leaves empty. Remove those, never one from before.
         if (m_packing)
-            for (int i = plate_list.get_plate_count() - 1; i >= m_plates_before && plate_list.get_plate(i)->empty(); --i)
-                plate_list.delete_plate(i);
+            drop_added_plates();
     }
 
     // unlock the plates we just locked
@@ -1292,6 +1316,15 @@ void ArrangeJob::apply_result(ArrangePolygons &selected, ArrangePolygons &unsele
     wxGetApp().obj_list()->reload_all_plates();
 
     m_plater->update();
+}
+
+// The live view of the packer, and the stock result applied before the packed one, may add
+// plates that the final layout leaves empty. Remove those, never one from before the arrange.
+void ArrangeJob::drop_added_plates()
+{
+    PartPlateList &plate_list = m_plater->get_partplate_list();
+    for (int i = plate_list.get_plate_count() - 1; i >= m_plates_before && plate_list.get_plate(i)->empty(); --i)
+        plate_list.delete_plate(i);
 }
 
 void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
@@ -1319,11 +1352,15 @@ void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
     const bool instances_intact = live_instances().size() == m_live_restore.size();
     if ((canceled && !m_packing) || !instances_intact || eptr) {
         if (m_live_used) {
-            // The preview may have added plates; recycle the empty ones.
-            if (!only_on_partplate)
-                m_plater->get_partplate_list().rebuild_plates_after_arrangement(true, true);
+            if (!only_on_partplate) {
+                m_plater->get_partplate_list().rebuild_plates_after_arrangement(false, true);
+                drop_added_plates();
+            }
             m_plater->update();
         }
+        // Every way out closes the notification and lets a plate arrange start again.
+        m_plater->get_notification_manager()->close_notification_of_type(NotificationType::ArrangeOngoing);
+        m_plater->m_arrange_running.store(false);
         return;
     }
 
