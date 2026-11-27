@@ -7979,6 +7979,14 @@ struct Plater::priv
     void on_action_send_to_printer(bool isall = false);
     void on_action_send_to_multi_machine(SimpleEvent&);
     int update_print_required_data(Slic3r::DynamicPrintConfig config, Slic3r::Model model, Slic3r::PlateDataPtrs plate_data_list, std::string file_name, std::string file_path);
+    // The undo snapshots hold the model and the plates but not the project's presets, colours and flush volumes,
+    // which a filament switch also changes. Each switch is therefore kept with the timestamp of the snapshot taken
+    // just before it, and undo and redo play the switches they jump over (the model and plates come from the
+    // snapshot). A switch is its own inverse. Only switches whose snapshot is still on the stack count.
+    struct FilamentSwitch { size_t snapshot_time; size_t filament_a; size_t filament_b; };
+    std::vector<FilamentSwitch> m_filament_switches;
+    void apply_filament_switch(size_t filament_a, size_t filament_b, bool with_model);
+    void replay_filament_switches(size_t from_time, size_t to_time);
 private:
     bool layers_height_allowed() const;
 
@@ -7988,14 +7996,6 @@ private:
     void undo_redo_to(std::vector<UndoRedo::Snapshot>::const_iterator it_snapshot);
     void update_after_undo_redo(const UndoRedo::Snapshot& snapshot, bool temp_snapshot_was_taken = false);
 
-    // The undo snapshots hold the model and the plates but not the project's presets, colours and flush volumes,
-    // which a filament switch also changes. Each switch is therefore kept with the timestamp of the snapshot taken
-    // just before it, and undo and redo play the switches they jump over (the model and plates come from the
-    // snapshot). A switch is its own inverse. Only switches whose snapshot is still on the stack count.
-    struct FilamentSwitch { size_t snapshot_time; size_t filament_a; size_t filament_b; };
-    std::vector<FilamentSwitch> m_filament_switches;
-    void apply_filament_switch(size_t filament_a, size_t filament_b, bool with_model);
-    void replay_filament_switches(size_t from_time, size_t to_time);
     void on_action_export_to_sdcard(SimpleEvent&);
     void on_action_export_to_sdcard_all(SimpleEvent&);
     void update_plugin_when_launch(wxCommandEvent& event);
@@ -22408,8 +22408,8 @@ void Plater::priv::apply_filament_switch(size_t filament_a, size_t filament_b, b
     // Every place that names a filament by number, whichever way it is stored.
     const std::map<int, int> slots{{int(filament_a), int(filament_b)}, {int(filament_b), int(filament_a)}};
     DynamicPrintConfig &print_config   = bundle.prints.get_edited_preset().config;
-    const bool          process_changed = remap_feature_filaments(print_config, slots) | remap_object_filaments(print_config, slots) |
-                                          remap_filament_option(print_config, "wipe_tower_filament", slots);
+    const bool          process_changed = int(remap_feature_filaments(print_config, slots)) | int(remap_object_filaments(print_config, slots)) |
+                                          int(remap_filament_option(print_config, "wipe_tower_filament", slots));
     remap_object_filaments(*config, slots);
     remap_filament_option(*config, "wipe_tower_filament", slots);
 
