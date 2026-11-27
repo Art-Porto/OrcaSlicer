@@ -722,6 +722,9 @@ TEST_CASE("Switching two filament slots swaps every use of them in the model and
     auto &material = model.add_material("shared")->config;
     material.set("outer_wall_filament_id", 1);
     ModelObject *implicit = model.add_object();
+    // An extruder of 0 means the first filament, as an absent key does.
+    ModelObject *zero = model.add_object();
+    zero->config.set("extruder", 0);
     ModelObject *untouched = model.add_object();
     untouched->config.set("extruder", 2);
     ModelVolume *untouched_part = untouched->add_volume(make_cube(5, 5, 5));
@@ -748,6 +751,7 @@ TEST_CASE("Switching two filament slots swaps every use of them in the model and
     CHECK(untouched->config.extruder() == 2);
     // An object that names no extruder prints with filament 1, so switching filament 1 gives it the other one.
     CHECK(implicit->config.extruder() == 3);
+    CHECK(zero->config.extruder() == 3);
 
     const auto &paint = painted->mmu_segmentation_facets.get_data();
     CHECK(TriangleSelector::has_facets(paint, EnforcerBlockerType(3)));
@@ -759,6 +763,8 @@ TEST_CASE("Switching two filament slots swaps every use of them in the model and
     // Switching back puts every assignment where it started.
     swap_model_filament_slots(model, 2, 0);
     CHECK(object->config.extruder() == 1);
+    CHECK(implicit->config.extruder() == 1);
+    CHECK(zero->config.extruder() == 1);
     CHECK(object->config.opt_int("support_filament") == 3);
     CHECK(painted->config.extruder() == 3);
     CHECK(tall.extruder() == 3);

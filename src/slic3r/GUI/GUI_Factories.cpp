@@ -2004,10 +2004,14 @@ void MenuFactory::create_filament_action_menu(bool init, int active_filament_men
         [filaments_cnt]() { return filaments_cnt > 1; }, m_parent);
 
     // Switch trades the two slots' places and everything that uses them; Merge deletes this one.
+    // Mixed filaments are not offered: they are not slots to trade, and a mixed one has its own menu.
+    const PresetBundle &bundle = *wxGetApp().preset_bundle;
     wxMenu* switch_menu = new wxMenu();
+    int switch_targets = 0;
     for (int i = 0; i < filaments_cnt; i++) {
-        if (i == active_filament_menu_id)
+        if (i == active_filament_menu_id || bundle.is_mixed_filament(i))
             continue;
+        ++switch_targets;
 
         auto preset = wxGetApp().preset_bundle->filaments.find_preset(wxGetApp().preset_bundle->filament_presets[i]);
         wxString item_name = preset ? from_u8(preset->label(false)) : wxString::Format(_L("Filament %d"), i + 1);
@@ -2016,8 +2020,9 @@ void MenuFactory::create_filament_action_menu(bool init, int active_filament_men
             [i](wxCommandEvent&) { plater()->sidebar().switch_filament(-2, i); }, *icons[i], menu,
             []() { return true; }, m_parent);
     }
+    const bool active_is_mixed = active_filament_menu_id >= 0 && bundle.is_mixed_filament(active_filament_menu_id);
     append_submenu(menu, switch_menu, wxID_ANY, _L("Switch with"), "", "",
-        [filaments_cnt]() { return filaments_cnt > 1; }, m_parent);
+        [switch_targets, active_is_mixed]() { return switch_targets > 0 && !active_is_mixed; }, m_parent);
 
     // Decompose a target colour into a printable mix of the loaded filaments. Placed before the
     append_menu_item(

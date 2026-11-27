@@ -4636,8 +4636,8 @@ void swap_model_filament_slots(Model &model, int slot_a, int slot_b)
             remap_object_filaments(config, slots);
         for (ModelVolume *volume : object->volumes)
             remap_object_filaments(volume->config, slots);
-        // An object that names no extruder prints with the first filament, and what it prints with has to follow.
-        if (!object->config.has("extruder")) {
+        // An object that names no extruder, or names 0, prints with the first filament, and what it prints with has to follow.
+        if (!object->config.has("extruder") || object->config.extruder() == 0) {
             if (slot_a == 0)
                 object->config.set("extruder", slot_b + 1);
             else if (slot_b == 0)

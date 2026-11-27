@@ -15986,8 +15986,12 @@ void Plater::priv::take_snapshot(const std::string& snapshot_name, const UndoRed
     }
     const GLGizmosManager& gizmos = get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_gizmos_manager() : view3D->get_canvas3d()->get_gizmos_manager();
 
-    if (snapshot_type == UndoRedo::SnapshotType::ProjectSeparator)
+    if (snapshot_type == UndoRedo::SnapshotType::ProjectSeparator) {
+        // Clearing the main stack restarts its snapshot times, so the switches kept against the old ones are void.
+        if (m_undo_redo_stack_active == &m_undo_redo_stack_main)
+            m_filament_switches.clear();
         this->undo_redo_stack().clear();
+    }
     this->undo_redo_stack().take_snapshot(snapshot_name, model, get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_selection() : view3D->get_canvas3d()->get_selection(), gizmos, partplate_list, snapshot_data);
     if (snapshot_type == UndoRedo::SnapshotType::LeavingGizmoWithAction) {
         // Filter all but the last UndoRedo::SnapshotType::GizmoAction in a row between the last UndoRedo::SnapshotType::EnteringGizmo and UndoRedo::SnapshotType::LeavingGizmoWithAction.
@@ -22474,6 +22478,18 @@ bool Plater::switch_filaments(size_t filament_a, size_t filament_b)
         bundle.is_mixed_filament(filament_b))
         return false;
 
+    // An open gizmo keeps its own undo stack and its own copy of the painting, which a switch would leave stale.
+    // Close it first, as the canvas does on a view change; closing writes its work back to the model.
+    for (GLCanvas3D *canvas : {p->view3D->get_canvas3d(), p->assemble_view ? p->assemble_view->get_canvas3d() : nullptr}) {
+        if (canvas == nullptr)
+            continue;
+        GLGizmosManager &gizmos = canvas->get_gizmos_manager();
+        if (gizmos.is_running()) {
+            gizmos.reset_all_states();
+            gizmos.update_data();
+        }
+    }
+
     UndoRedo::Stack &stack       = p->undo_redo_stack();
     const size_t     time_before = stack.active_snapshot_time();
     take_snapshot(_u8L("Switch filaments"));
@@ -25282,7 +25298,11 @@ bool Plater::can_scale_to_print_volume() const { return p->can_scale_to_print_vo
 #endif // ENABLE_ENHANCED_PRINT_VOLUME_FIT
 
 const UndoRedo::Stack& Plater::undo_redo_stack_main() const { return p->undo_redo_stack_main(); }
-void Plater::clear_undo_redo_stack_main() { p->undo_redo_stack_main().clear(); }
+void Plater::clear_undo_redo_stack_main()
+{
+    p->m_filament_switches.clear();
+    p->undo_redo_stack_main().clear();
+}
 void Plater::enter_gizmos_stack() { p->enter_gizmos_stack(); }
 bool Plater::leave_gizmos_stack() { return p->leave_gizmos_stack(); } // BBS: return false if not changed
 bool Plater::inside_snapshot_capture() { return p->inside_snapshot_capture(); }
