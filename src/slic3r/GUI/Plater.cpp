@@ -5999,6 +5999,17 @@ bool Sidebar::change_filament(size_t from_id, size_t to_id, std::optional<bool> 
     return true;
 }
 
+bool Sidebar::switch_filament(size_t from_id, size_t to_id)
+{
+    if (is_new_project_in_gcode3mf())
+        return false;
+    if (from_id == size_t(-2))
+        from_id = p->m_menu_filament_id;
+    // Like edit_filament(): no slot may be bound while the presets change places.
+    p->editing_filament = -1;
+    return p->plater->switch_filaments(from_id, to_id);
+}
+
 void Sidebar::edit_filament()
 {
     p->editing_filament = -1;
@@ -7976,6 +7987,15 @@ private:
 
     void undo_redo_to(std::vector<UndoRedo::Snapshot>::const_iterator it_snapshot);
     void update_after_undo_redo(const UndoRedo::Snapshot& snapshot, bool temp_snapshot_was_taken = false);
+
+    // The undo snapshots hold the model and the plates but not the project's presets, colours and flush volumes,
+    // which a filament switch also changes. Each switch is therefore kept with the timestamp of the snapshot taken
+    // just before it, and undo and redo play the switches they jump over (the model and plates come from the
+    // snapshot). A switch is its own inverse. Only switches whose snapshot is still on the stack count.
+    struct FilamentSwitch { size_t snapshot_time; size_t filament_a; size_t filament_b; };
+    std::vector<FilamentSwitch> m_filament_switches;
+    void apply_filament_switch(size_t filament_a, size_t filament_b, bool with_model);
+    void replay_filament_switches(size_t from_time, size_t to_time);
     void on_action_export_to_sdcard(SimpleEvent&);
     void on_action_export_to_sdcard_all(SimpleEvent&);
     void update_plugin_when_launch(wxCommandEvent& event);
@@ -16128,11 +16148,15 @@ void Plater::priv::undo_redo_to(std::vector<UndoRedo::Snapshot>::const_iterator 
     const UndoRedo::Snapshot snapshot_copy = *it_snapshot;
     // Orca: custom G-codes are not in the snapshot, so remap them by plate ID after the jump.
     const std::vector<ObjectID> plate_ids_before = this->partplate_list.get_plate_ids();
+    const bool   jump_in_main_stack = &this->undo_redo_stack() == &m_undo_redo_stack_main;
+    const size_t time_before_jump   = this->undo_redo_stack().active_snapshot_time();
     // Do the jump in time.
     if (it_snapshot->timestamp < this->undo_redo_stack().active_snapshot_time() ?
         this->undo_redo_stack().undo(model, get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_selection() : this->view3D->get_canvas3d()->get_selection(), get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_gizmos_manager() : this->view3D->get_canvas3d()->get_gizmos_manager(), this->partplate_list, top_snapshot_data, it_snapshot->timestamp) :
         this->undo_redo_stack().redo(model, get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_gizmos_manager() : this->view3D->get_canvas3d()->get_gizmos_manager(), this->partplate_list, it_snapshot->timestamp)) {
         this->partplate_list.remap_custom_gcodes(plate_ids_before);
+        if (jump_in_main_stack)
+            this->replay_filament_switches(time_before_jump, snapshot_copy.timestamp);
         if (printer_technology_changed) {
             // Switch to the other printer technology. Switch to the last printer active for that particular technology.
             AppConfig *app_config = wxGetApp().app_config;
@@ -22375,8 +22399,97 @@ void Plater::on_filament_count_change(size_t num_filaments)
     }
 }
 
+void Plater::priv::apply_filament_switch(size_t filament_a, size_t filament_b, bool with_model)
+{
+    PresetBundle &bundle = *wxGetApp().preset_bundle;
+    if (!bundle.swap_filaments(filament_a, filament_b))
+        return;
+
+    // Every place that names a filament by number, whichever way it is stored.
+    const std::map<int, int> slots{{int(filament_a), int(filament_b)}, {int(filament_b), int(filament_a)}};
+    DynamicPrintConfig &print_config   = bundle.prints.get_edited_preset().config;
+    const bool          process_changed = remap_feature_filaments(print_config, slots) | remap_object_filaments(print_config, slots) |
+                                          remap_filament_option(print_config, "wipe_tower_filament", slots);
+    remap_object_filaments(*config, slots);
+    remap_filament_option(*config, "wipe_tower_filament", slots);
+
+    // Custom G-codes (color changes and tool changes by layer) are not in the undo snapshots.
+    for (auto &[plate, info] : model.plates_custom_gcodes)
+        for (CustomGCode::Item &item : info.gcodes)
+            if (item.type == CustomGCode::ToolChange || item.type == CustomGCode::ColorChange) {
+                if (item.extruder == int(filament_a) + 1)
+                    item.extruder = int(filament_b) + 1;
+                else if (item.extruder == int(filament_b) + 1)
+                    item.extruder = int(filament_a) + 1;
+            }
+
+    // The model and the plates are what the snapshots restore, so undo and redo leave them alone.
+    if (with_model) {
+        swap_model_filament_slots(model, int(filament_a), int(filament_b));
+        partplate_list.on_filaments_switched(int(filament_a), int(filament_b));
+    }
+
+    q->update_filament_colors_in_full_config();
+    for (size_t slot : {filament_a, filament_b})
+        if (slot < sidebar->combos_filament().size())
+            sidebar->combos_filament()[slot]->update();
+    sidebar->update_mixed_filament_list();
+    sidebar->update_dynamic_filament_list();
+    update_print_tab_after_filament_change(process_changed);
+    bundle.export_selections(*wxGetApp().app_config);
+
+    if (with_model) {
+        sidebar->obj_list()->update_objects_list_filament_column(bundle.filament_presets.size());
+        // Restart the background process: the slice no longer matches the slot numbers.
+        q->update(false, true);
+    }
+}
+
+void Plater::priv::replay_filament_switches(size_t from_time, size_t to_time)
+{
+    // The state at a snapshot has the switches taken before it, and none of those taken from it on.
+    const std::vector<UndoRedo::Snapshot> &snapshots = m_undo_redo_stack_main.snapshots();
+    m_filament_switches.erase(std::remove_if(m_filament_switches.begin(), m_filament_switches.end(),
+                                             [&snapshots](const FilamentSwitch &entry) {
+                                                 return !std::binary_search(snapshots.begin(), snapshots.end(), UndoRedo::Snapshot(entry.snapshot_time));
+                                             }),
+                              m_filament_switches.end());
+    if (to_time < from_time) {
+        // Undo, newest first.
+        for (auto it = m_filament_switches.rbegin(); it != m_filament_switches.rend(); ++it)
+            if (it->snapshot_time >= to_time && it->snapshot_time < from_time)
+                apply_filament_switch(it->filament_a, it->filament_b, false);
+    } else if (from_time < to_time) {
+        for (const FilamentSwitch &entry : m_filament_switches)
+            if (entry.snapshot_time >= from_time && entry.snapshot_time < to_time)
+                apply_filament_switch(entry.filament_a, entry.filament_b, false);
+    }
+}
+
+bool Plater::switch_filaments(size_t filament_a, size_t filament_b)
+{
+    const PresetBundle &bundle = *wxGetApp().preset_bundle;
+    const size_t        count  = bundle.filament_presets.size();
+    if (filament_a == filament_b || filament_a >= count || filament_b >= count || bundle.is_mixed_filament(filament_a) ||
+        bundle.is_mixed_filament(filament_b))
+        return false;
+
+    UndoRedo::Stack &stack       = p->undo_redo_stack();
+    const size_t     time_before = stack.active_snapshot_time();
+    take_snapshot(_u8L("Switch filaments"));
+    const std::vector<UndoRedo::Snapshot> &snapshots = stack.snapshots();
+    // A new snapshot is followed by the topmost one, which stands for the state the switch is about to make.
+    if (&stack == &p->undo_redo_stack_main() && stack.active_snapshot_time() != time_before && snapshots.size() >= 2)
+        p->m_filament_switches.push_back({snapshots[snapshots.size() - 2].timestamp, filament_a, filament_b});
+
+    p->apply_filament_switch(filament_a, filament_b, true);
+    return true;
+}
+
 void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int replace_filament_id, const std::vector<unsigned char>& is_mixed_before_delete)
 {
+    // Switches are remembered by slot number, which a delete renumbers.
+    p->m_filament_switches.clear();
     // only update elements in plater
     update_filament_colors_in_full_config();
 

@@ -2027,6 +2027,12 @@ void remap_model_filament_configs(Model &model, const std::map<int, int> &slots,
 // entries are applied simultaneously (no chained lookups), untouched slots keep everything.
 void remap_model_filament_slots(Model &model, const std::map<int, int> &slot_relocations);
 
+// Swap the roles of two filament slots (zero-based) across the model: the extruder of every object,
+// volume, layer range and material, the per-feature filaments, the support, support interface and
+// brim filaments, and the color painting. Whatever printed with slot a prints with slot b and the
+// other way round, so the model looks the same and only the slot numbers change.
+void swap_model_filament_slots(Model &model, int slot_a, int slot_b);
+
 #ifndef NDEBUG
 // Verify whether the IDs of Model / ModelObject / ModelVolume / ModelInstance / ModelMaterial are valid and unique.
 void check_model_ids_validity(const Model &model);

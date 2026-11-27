@@ -456,6 +456,11 @@ public:
     // then move the new slots ahead of the mixed tail, as Sidebar::add_custom_filament does.
     void            set_num_filaments(unsigned int n, std::string new_col = "");
     void         update_num_filaments(unsigned int to_del_flament_id);
+    // Swap two physical filament slots: the presets, every per-filament array of the project config
+    // (colours, maps, mixed-filament components), the AMS colours and the rows and columns of the
+    // flush volumes. Returns false, leaving everything as it was, when a slot is out of range, is
+    // mixed, or both are the same.
+    bool         swap_filaments(size_t slot_a, size_t slot_b);
 
     void get_ams_cobox_infos(AMSComboInfo &combox_info);
     unsigned int sync_ams_list(std::vector<std::pair<DynamicPrintConfig *,std::string>> &unknowns, bool use_map, std::map<int, AMSMapInfo> &maps, bool enable_append, MergeFilamentInfo &merge_info, bool color_only = false);

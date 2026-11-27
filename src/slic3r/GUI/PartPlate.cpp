@@ -5951,6 +5951,35 @@ void PartPlate::on_filament_deleted(int filament_count, int filament_id)
     update_first_layer_print_sequence_when_delete_filament(filament_id);
 }
 
+void PartPlate::on_filaments_switched(int filament_a, int filament_b)
+{
+    for (const char* key : {"filament_map", "filament_nozzle_map", "filament_volume_map"}) {
+        if (ConfigOptionInts* opt = m_config.option<ConfigOptionInts>(key)) {
+            std::vector<int>& values = opt->values;
+            if (filament_a >= 0 && filament_b >= 0 && filament_a < (int) values.size() && filament_b < (int) values.size())
+                std::swap(values[filament_a], values[filament_b]);
+        }
+    }
+    invalidate_exclusion_volume_preview();
+
+    // The print sequences list one-based filament numbers in print order: the order stays, the numbers swap.
+    auto switched = [filament_a, filament_b](int number) {
+        return number == filament_a + 1 ? filament_b + 1 : number == filament_b + 1 ? filament_a + 1 : number;
+    };
+    auto other_layers_seqs = get_other_layers_print_sequence();
+    if (!other_layers_seqs.empty()) {
+        for (auto& other_layers_seq : other_layers_seqs)
+            for (int& number : other_layers_seq.second)
+                number = switched(number);
+        set_other_layers_print_sequence(other_layers_seqs);
+    }
+
+    ConfigOptionInts* op_print_sequence_1st = m_config.option<ConfigOptionInts>("first_layer_print_sequence");
+    if (op_print_sequence_1st && !op_print_sequence_1st->values.empty() && op_print_sequence_1st->values[0] != 0)
+        for (int& number : op_print_sequence_1st->values)
+            number = switched(number);
+}
+
 
 /* PartPlate List related functions*/
 PartPlateList::PartPlateList(int width, int depth, double height, Plater* platerObj, Model* modelObj, PrinterTechnology tech)
@@ -9288,6 +9317,12 @@ void PartPlateList::on_filament_deleted(int filament_count, int filament_id)
         m_plate_list[i]->on_filament_deleted(filament_count, filament_id);
     }
     BOOST_LOG_TRIVIAL(info) << boost::format("%1%: filament_count=%2%, filament_id=%3%")% __FUNCTION__ %filament_count %filament_id;
+}
+
+void PartPlateList::on_filaments_switched(int filament_a, int filament_b)
+{
+    for (PartPlate* plate : m_plate_list)
+        plate->on_filaments_switched(filament_a, filament_b);
 }
 
 }//end namespace GUI

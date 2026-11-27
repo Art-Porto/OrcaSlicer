@@ -7,6 +7,7 @@
 #include <vector>
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/TriangleMesh.hpp"
+#include "libslic3r/TriangleSelector.hpp"
 #include "libslic3r/Polygon.hpp"
 #include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/Point.hpp"
@@ -691,4 +692,75 @@ TEST_CASE("Per-feature filament assignments follow mixed slots at each model sco
     check_assignments(4);
     remap_model_filament_configs(model, {{3, -1}}, false);
     check_assignments(0);
+}
+
+TEST_CASE("Switching two filament slots swaps every use of them in the model and leaves the rest", "[Model][FilamentMixer]")
+{
+    Model model;
+    ModelObject *object = model.add_object();
+    object->config.set("extruder", 1);
+    object->config.set("support_filament", 3);
+    object->config.set("brim_filament_id", 2);
+    ModelVolume *painted = object->add_volume(make_cube(10, 10, 10));
+    painted->config.set("extruder", 3);
+    painted->config.set("sparse_infill_filament_id", 1);
+    painted->config.set("support_interface_filament", 3);
+    {
+        TriangleSelector selector(painted->mesh());
+        selector.set_facet(0, EnforcerBlockerType(1));
+        selector.set_facet(1, EnforcerBlockerType(3));
+        selector.set_facet(2, EnforcerBlockerType(2));
+        painted->mmu_segmentation_facets.set_data(selector.serialize());
+    }
+    ModelVolume *inherits = object->add_volume(make_cube(5, 5, 5));
+    auto &tall   = object->layer_config_ranges[{0., 5.}];
+    auto &deflt  = object->layer_config_ranges[{5., 10.}];
+    auto &other  = object->layer_config_ranges[{10., 15.}];
+    tall.set("extruder", 3);
+    deflt.set("extruder", 0);
+    other.set("extruder", 2);
+    auto &material = model.add_material("shared")->config;
+    material.set("outer_wall_filament_id", 1);
+    ModelObject *implicit = model.add_object();
+    ModelObject *untouched = model.add_object();
+    untouched->config.set("extruder", 2);
+    ModelVolume *untouched_part = untouched->add_volume(make_cube(5, 5, 5));
+    {
+        TriangleSelector selector(untouched_part->mesh());
+        selector.set_facet(0, EnforcerBlockerType(2));
+        untouched_part->mmu_segmentation_facets.set_data(selector.serialize());
+    }
+
+    // Zero-based slots 0 and 2 are filaments 1 and 3.
+    swap_model_filament_slots(model, 0, 2);
+
+    CHECK(object->config.extruder() == 3);
+    CHECK(object->config.opt_int("support_filament") == 1);
+    CHECK(object->config.opt_int("brim_filament_id") == 2);
+    CHECK(painted->config.extruder() == 1);
+    CHECK(painted->config.opt_int("sparse_infill_filament_id") == 3);
+    CHECK(painted->config.opt_int("support_interface_filament") == 1);
+    CHECK_FALSE(inherits->config.has("extruder"));
+    CHECK(tall.extruder() == 1);
+    CHECK(deflt.extruder() == 0);
+    CHECK(other.extruder() == 2);
+    CHECK(material.opt_int("outer_wall_filament_id") == 3);
+    CHECK(untouched->config.extruder() == 2);
+    // An object that names no extruder prints with filament 1, so switching filament 1 gives it the other one.
+    CHECK(implicit->config.extruder() == 3);
+
+    const auto &paint = painted->mmu_segmentation_facets.get_data();
+    CHECK(TriangleSelector::has_facets(paint, EnforcerBlockerType(3)));
+    CHECK(TriangleSelector::has_facets(paint, EnforcerBlockerType(1)));
+    CHECK(TriangleSelector::has_facets(paint, EnforcerBlockerType(2)));
+    CHECK(TriangleSelector::has_facets(untouched_part->mmu_segmentation_facets.get_data(), EnforcerBlockerType(2)));
+    CHECK_FALSE(TriangleSelector::has_facets(untouched_part->mmu_segmentation_facets.get_data(), EnforcerBlockerType(1)));
+
+    // Switching back puts every assignment where it started.
+    swap_model_filament_slots(model, 2, 0);
+    CHECK(object->config.extruder() == 1);
+    CHECK(object->config.opt_int("support_filament") == 3);
+    CHECK(painted->config.extruder() == 3);
+    CHECK(tall.extruder() == 3);
+    CHECK(material.opt_int("outer_wall_filament_id") == 1);
 }

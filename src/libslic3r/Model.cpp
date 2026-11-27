@@ -4619,6 +4619,33 @@ void remap_model_filament_slots(Model &model, const std::map<int, int> &slot_rel
             volume->mmu_segmentation_facets.remap_states(*volume, paint_state_map);
 }
 
+void swap_model_filament_slots(Model &model, int slot_a, int slot_b)
+{
+    if (slot_a == slot_b)
+        return;
+
+    const std::map<int, int> slots{{slot_a, slot_b}, {slot_b, slot_a}};
+    remap_model_filament_slots(model, slots);
+
+    // remap_model_filament_slots() leaves the print-wide choices that objects and volumes override.
+    for (auto &[id, material] : model.materials)
+        remap_object_filaments(material->config, slots);
+    for (ModelObject *object : model.objects) {
+        remap_object_filaments(object->config, slots);
+        for (auto &[range, config] : object->layer_config_ranges)
+            remap_object_filaments(config, slots);
+        for (ModelVolume *volume : object->volumes)
+            remap_object_filaments(volume->config, slots);
+        // An object that names no extruder prints with the first filament, and what it prints with has to follow.
+        if (!object->config.has("extruder")) {
+            if (slot_a == 0)
+                object->config.set("extruder", slot_b + 1);
+            else if (slot_b == 0)
+                object->config.set("extruder", slot_a + 1);
+        }
+    }
+}
+
 #ifndef NDEBUG
 // Verify whether the IDs of Model / ModelObject / ModelVolume / ModelInstance / ModelMaterial are valid and unique.
 void check_model_ids_validity(const Model &model)

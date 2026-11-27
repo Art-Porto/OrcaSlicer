@@ -2003,6 +2003,22 @@ void MenuFactory::create_filament_action_menu(bool init, int active_filament_men
     append_submenu(menu, sub_menu, wxID_ANY, _L("Merge with"), "", "",
         [filaments_cnt]() { return filaments_cnt > 1; }, m_parent);
 
+    // Switch trades the two slots' places and everything that uses them; Merge deletes this one.
+    wxMenu* switch_menu = new wxMenu();
+    for (int i = 0; i < filaments_cnt; i++) {
+        if (i == active_filament_menu_id)
+            continue;
+
+        auto preset = wxGetApp().preset_bundle->filaments.find_preset(wxGetApp().preset_bundle->filament_presets[i]);
+        wxString item_name = preset ? from_u8(preset->label(false)) : wxString::Format(_L("Filament %d"), i + 1);
+
+        append_menu_item(switch_menu, wxID_ANY, item_name, "",
+            [i](wxCommandEvent&) { plater()->sidebar().switch_filament(-2, i); }, *icons[i], menu,
+            []() { return true; }, m_parent);
+    }
+    append_submenu(menu, switch_menu, wxID_ANY, _L("Switch with"), "", "",
+        [filaments_cnt]() { return filaments_cnt > 1; }, m_parent);
+
     // Decompose a target colour into a printable mix of the loaded filaments. Placed before the
     append_menu_item(
         menu, wxID_ANY, _L("Decompose Color"), "", [](wxCommandEvent&) {
