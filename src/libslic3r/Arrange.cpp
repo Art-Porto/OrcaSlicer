@@ -227,24 +227,23 @@ void update_selected_items_inflation(ArrangePolygons& selected, const DynamicPri
         else
             params.min_obj_distance = std::max(params.min_obj_distance, scaled(params.clearance_radius + 0.001)); // +0.001mm to avoid clearance check fail due to rounding error
     }
-    double brim_max = 0;
-    bool plate_has_tree_support = false;
-    std::for_each(selected.begin(), selected.end(), [&](ArrangePolygon& ap) {
-        brim_max = std::max(brim_max, ap.brim_width);
-        if (ap.has_tree_support) plate_has_tree_support = true; });
+    // Orca: an object whose tree support may stand anywhere around it keeps half its brim width around it, the room of
+    // a trunk beside it (see get_instance_arrange_poly()); the other objects keep their own brim width.
+    auto own_inflation = [](const ArrangePolygon &ap) { return ap.has_tree_support ? scaled(ap.brim_width / 2) : scaled(ap.brim_width); };
+    coord_t own_max = 0;
+    for (const ArrangePolygon &ap : selected)
+        own_max = std::max(own_max, own_inflation(ap));
     std::for_each(selected.begin(), selected.end(), [&](ArrangePolygon& ap) {
         // 1. if user input a distance, use it
-        // 2. if there is an object with tree support, all objects use the max tree branch radius (brim_max=branch diameter)
-        // 3. otherwise, use each object's own brim width
-        ap.inflation = params.min_obj_distance != 0 ? params.min_obj_distance / 2 :
-            plate_has_tree_support ? scaled(brim_max / 2) : scaled(ap.brim_width);
+        // 2. otherwise, each object's own margin
+        ap.inflation = params.min_obj_distance != 0 ? params.min_obj_distance / 2 : own_inflation(ap);
         });
 
     // The inflation past every item's brim or tree support only keeps items apart, so the bed may grow
     // by it, and by all of it when printing by object. A round bed would grow unevenly at its
     // diagonals, so a set distance grows only a rectangular bed.
     coord_t reach = params.is_seq_print  ? params.min_obj_distance / 2 :
-                    is_box_bed(bed_shape) ? params.min_obj_distance / 2 - (plate_has_tree_support ? scaled(brim_max / 2) : scaled(brim_max)) :
+                    is_box_bed(bed_shape) ? params.min_obj_distance / 2 - own_max :
                                             0;
     reach = std::max<coord_t>(0, reach);
 
