@@ -750,6 +750,8 @@ public:
     void set_filament_count(int filament_count);
     void on_filament_added();
     void on_filament_deleted(int filament_count, int filament_id);
+    // Two filaments traded places: their per-plate maps and the order of the print sequences follow.
+    void on_filaments_switched(int filament_a, int filament_b);
 
     friend class cereal::access;
     friend class UndoRedo::StackImpl;
@@ -1194,6 +1196,7 @@ public:
     void set_filament_count(int filament_count);
     void on_filament_deleted(int filament_count, int filament_id);
     void on_filament_added(int filament_count);
+    void on_filaments_switched(int filament_a, int filament_b);
 
     std::map<int, bool> m_allow_bed_type_in_double_nozzle;
     BedTextureInfo bed_texture_info[btCount];

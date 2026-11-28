@@ -18,6 +18,9 @@ inline constexpr const char *feature_filament_keys[] = {
     "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id"
 };
 
+// The print-wide filament choices that objects and volumes can override the same way.
+inline constexpr const char *object_filament_keys[] = {"support_filament", "support_interface_filament", "brim_filament_id"};
+
 // Config values are one-based (0 inherits). The map uses zero-based slots, with -1 for a removed slot.
 template<class Config>
 bool remap_filament_option(Config &config, const char *key, const std::map<int, int> &slots)
@@ -39,6 +42,15 @@ bool remap_feature_filaments(Config &config, const std::map<int, int> &slots)
 {
     bool changed = false;
     for (const char *key : feature_filament_keys)
+        changed |= remap_filament_option(config, key, slots);
+    return changed;
+}
+
+template<class Config>
+bool remap_object_filaments(Config &config, const std::map<int, int> &slots)
+{
+    bool changed = false;
+    for (const char *key : object_filament_keys)
         changed |= remap_filament_option(config, key, slots);
     return changed;
 }

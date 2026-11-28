@@ -237,6 +237,9 @@ public:
     // Whether merging filament `from_id` into `to_id` (0 base) deletes a physical filament that the mixed filament `to_id`
     // mixes, which change_filament() asks about first.
     bool merge_removes_component(size_t from_id, size_t to_id) const;
+    // Trades the places of two physical filaments, taking everything that uses them along. 0 base, -2 for the
+    // filament the menu was opened on. False when a slot is not a physical filament.
+    bool switch_filament(size_t from_id, size_t to_id);
     void edit_filament();
     // Loads a filament's preset into the filament tab without showing it, so that edits go to it. 0 based.
     bool load_filament_in_tab(size_t filament_id);
@@ -793,6 +796,11 @@ public:
     void on_filament_change(size_t filament_idx);
     void on_filament_count_change(size_t extruders_count);
     void on_filaments_delete(size_t extruders_count, size_t filament_id, int replace_filament_id = -1, const std::vector<unsigned char>& is_mixed_before_delete = {});
+    // Trades the places of two physical filaments (0 base): their presets and colours, the per-filament project
+    // settings, the flush volumes and every use of them in the model, the plates and the custom G-codes.
+    // Undo and redo take the switch back and forth with the model. False, and nothing changed, when a slot is not
+    // a physical filament.
+    bool switch_filaments(size_t filament_a, size_t filament_b);
     std::vector<Slic3r::ColorRGBA> get_extruders_colors();
     // BBS
     void on_bed_type_change(BedType bed_type);

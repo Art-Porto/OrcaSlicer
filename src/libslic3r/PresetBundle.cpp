@@ -4491,6 +4491,73 @@ void PresetBundle::update_num_filaments(unsigned int to_del_flament_id)
     update_multi_material_filament_presets(to_del_flament_id);
 }
 
+bool PresetBundle::swap_filaments(size_t slot_a, size_t slot_b)
+{
+    const size_t count = filament_presets.size();
+    if (slot_a == slot_b || slot_a >= count || slot_b >= count || is_mixed_filament(slot_a) || is_mixed_filament(slot_b))
+        return false;
+
+    std::swap(filament_presets[slot_a], filament_presets[slot_b]);
+
+    // Per-slot arrays. An array shorter than the slot count has nothing to move for the slots it lacks.
+    auto swap_cells = [&](auto &values) {
+        if (slot_a < values.size() && slot_b < values.size())
+            std::swap(values[slot_a], values[slot_b]);
+    };
+    auto swap_option = [&](const char *key) {
+        if (ConfigOption *opt = project_config.optptr(key)) {
+            if (auto *strings = dynamic_cast<ConfigOptionStrings *>(opt))
+                swap_cells(strings->values);
+            else if (auto *ints = dynamic_cast<ConfigOptionInts *>(opt))
+                swap_cells(ints->values);
+            else if (auto *bools = dynamic_cast<ConfigOptionBools *>(opt))
+                swap_cells(bools->values);
+        }
+    };
+    for (const char *key : {"filament_colour", "filament_multi_colour", "filament_colour_type", "filament_map", "filament_nozzle_map",
+                            "filament_volume_map", "filament_is_mixed", "filament_mixed_components", "filament_mixed_sublayer_ratios",
+                            "filament_mixed_gradient", "filament_mixed_gradient_range", "filament_mixed_gradient_curve",
+                            "filament_mixed_gradient_per_part"})
+        swap_option(key);
+    swap_cells(ams_multi_color_filment);
+
+    // Mixed filaments name their components by one-based filament number.
+    const auto *is_mixed = project_config.option<ConfigOptionBools>("filament_is_mixed");
+    if (auto *components = project_config.option<ConfigOptionStrings>("filament_mixed_components")) {
+        for (size_t i = 0; i < components->values.size(); ++i) {
+            if (is_mixed == nullptr || i >= is_mixed->values.size() || !is_mixed->values[i])
+                continue;
+            std::vector<unsigned int> ids = parse_mixed_components(components->values[i]);
+            for (unsigned int &id : ids)
+                id = id == slot_a + 1 ? unsigned(slot_b + 1) : id == slot_b + 1 ? unsigned(slot_a + 1) : id;
+            components->values[i] = format_mixed_components(ids);
+        }
+    }
+
+    // Flush volumes: one count x count block per nozzle, row = filament unloaded, column = filament loaded;
+    // the vector holds two values per filament.
+    if (auto *matrix = project_config.option<ConfigOptionFloats>("flush_volumes_matrix")) {
+        const size_t block = count * count;
+        if (block > 0 && matrix->values.size() % block == 0) {
+            for (size_t offset = 0; offset < matrix->values.size(); offset += block) {
+                for (size_t k = 0; k < count; ++k) {
+                    std::swap(matrix->values[offset + slot_a * count + k], matrix->values[offset + slot_b * count + k]);
+                }
+                for (size_t k = 0; k < count; ++k) {
+                    std::swap(matrix->values[offset + k * count + slot_a], matrix->values[offset + k * count + slot_b]);
+                }
+            }
+        }
+    }
+    if (auto *vector = project_config.option<ConfigOptionFloats>("flush_volumes_vector")) {
+        if (vector->values.size() == 2 * count) {
+            std::swap(vector->values[2 * slot_a], vector->values[2 * slot_b]);
+            std::swap(vector->values[2 * slot_a + 1], vector->values[2 * slot_b + 1]);
+        }
+    }
+    return true;
+}
+
 bool PresetBundle::is_mixed_filament(size_t idx) const
 {
     auto *opt = project_config.option<ConfigOptionBools>("filament_is_mixed");

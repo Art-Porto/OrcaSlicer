@@ -5,6 +5,7 @@
 #include <catch2/catch_all.hpp>
 
 #include <algorithm>
+#include <array>
 #include <boost/filesystem.hpp>
 #include <boost/nowide/convert.hpp>
 #include <boost/nowide/fstream.hpp>
@@ -3013,6 +3014,78 @@ TEST_CASE("Resizing the filament list below a mixed tail drops it", "[Preset][Bu
 
         CHECK(bundle.filament_presets.size() == nozzle_count);
         CHECK(bundle.num_mixed_filaments() == 0);
+    }
+}
+
+// Switching two filaments moves everything the project keeps for them: the preset and colour, the
+// per-filament maps, the purge volumes between them and the other filaments, and the mixes that
+// name them as components. The mixed slot at the tail stays where it is.
+TEST_CASE("Switching two filaments swaps their presets, per-filament arrays and flush volumes", "[Preset][Bundle][FilamentMixer]")
+{
+    constexpr size_t slots = 5; // four physical filaments and one mix of filaments 1 and 3
+    PresetBundle bundle;
+    bundle.set_num_filaments(unsigned(slots), std::string("#FF0000"));
+    bundle.filament_presets = {"A", "B", "C", "D", "Mix"};
+    auto &colours = bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values;
+    colours = {"#000001", "#000002", "#000003", "#000004", "#000005"};
+    bundle.project_config.option<ConfigOptionInts>("filament_map")->values = {1, 2, 1, 2, 1};
+    bundle.project_config.option<ConfigOptionBools>("filament_is_mixed")->values = {false, false, false, false, true};
+    bundle.project_config.option<ConfigOptionStrings>("filament_mixed_components")->values = {"", "", "", "", "1,3"};
+    bundle.ams_multi_color_filment.assign(slots, {});
+    bundle.ams_multi_color_filment[0] = {"#FFFFFF"};
+
+    auto &matrix = bundle.project_config.option<ConfigOptionFloats>("flush_volumes_matrix")->values;
+    REQUIRE(matrix.size() % (slots * slots) == 0);
+    const size_t nozzles = matrix.size() / (slots * slots);
+    for (size_t nozzle = 0; nozzle < nozzles; ++nozzle)
+        for (size_t row = 0; row < slots; ++row)
+            for (size_t column = 0; column < slots; ++column)
+                matrix[nozzle * slots * slots + row * slots + column] = double(nozzle * 1000 + row * 10 + column);
+    const std::vector<double> before = matrix;
+    auto &purge = bundle.project_config.option<ConfigOptionFloats>("flush_volumes_vector")->values;
+    REQUIRE(purge.size() == 2 * slots);
+    for (size_t i = 0; i < purge.size(); ++i)
+        purge[i] = double(100 + i);
+
+    SECTION("two physical filaments trade places") {
+        REQUIRE(bundle.swap_filaments(0, 2));
+        CHECK(bundle.filament_presets == std::vector<std::string>{"C", "B", "A", "D", "Mix"});
+        CHECK(colours == std::vector<std::string>{"#000003", "#000002", "#000001", "#000004", "#000005"});
+        CHECK(bundle.project_config.option<ConfigOptionInts>("filament_map")->values == std::vector<int>{1, 2, 1, 2, 1});
+        CHECK(bundle.ams_multi_color_filment[2] == std::vector<std::string>{"#FFFFFF"});
+        CHECK(bundle.ams_multi_color_filment[0].empty());
+        CHECK(bundle.project_config.option<ConfigOptionStrings>("filament_mixed_components")->values[4] == "3,1");
+        CHECK(bundle.is_mixed_filament(4));
+
+        // The matrix is permuted on rows and on columns: what moved from filament a to b now moves from c to d.
+        const std::array<size_t, slots> from = {2, 1, 0, 3, 4};
+        for (size_t nozzle = 0; nozzle < nozzles; ++nozzle)
+            for (size_t row = 0; row < slots; ++row)
+                for (size_t column = 0; column < slots; ++column) {
+                    CAPTURE(nozzle, row, column);
+                    CHECK(matrix[nozzle * slots * slots + row * slots + column] ==
+                          before[nozzle * slots * slots + from[row] * slots + from[column]]);
+                }
+        CHECK(purge[0] == 104);
+        CHECK(purge[1] == 105);
+        CHECK(purge[4] == 100);
+        CHECK(purge[5] == 101);
+        CHECK(purge[2] == 102);
+    }
+
+    SECTION("switching twice restores everything") {
+        REQUIRE(bundle.swap_filaments(1, 3));
+        REQUIRE(bundle.swap_filaments(3, 1));
+        CHECK(bundle.filament_presets == std::vector<std::string>{"A", "B", "C", "D", "Mix"});
+        CHECK(matrix == before);
+    }
+
+    SECTION("a mixed filament, the same slot or a missing slot is refused and nothing changes") {
+        CHECK_FALSE(bundle.swap_filaments(0, 4));
+        CHECK_FALSE(bundle.swap_filaments(2, 2));
+        CHECK_FALSE(bundle.swap_filaments(0, 9));
+        CHECK(bundle.filament_presets == std::vector<std::string>{"A", "B", "C", "D", "Mix"});
+        CHECK(matrix == before);
     }
 }
 
