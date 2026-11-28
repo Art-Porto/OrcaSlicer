@@ -60,6 +60,7 @@
 #include <map>
 #include <set>
 #include "libslic3r/BrimEarsPoint.hpp"
+#include "libslic3r/Slicing.hpp"
 #include "libslic3r/ObjectID.hpp"
 #include "slic3r/GUI/GUI_ObjectSettings.hpp"
 #include <cmath>
@@ -3707,6 +3708,10 @@ DynamicPrintConfig ObjectList::get_default_layer_config(const int obj_idx)
     config.set_key_value("layer_height",new ConfigOptionFloat(layer_height));
     // A new range prints with the object's filament ("Default").
     config.set_key_value("extruder",    new ConfigOptionInt(0));
+    // Orca: a new range leaves its layers to the variable layer heights, so a range added to change the
+    // filament or other settings does not flatten them. With no variable layer heights it prints at the
+    // object's layer height.
+    config.set_key_value("range_variable_layer_height", new ConfigOptionBool(true));
 
     return config;
 }
@@ -5097,18 +5102,25 @@ bool ObjectList::edit_layer_range(const t_layer_height_range& range, const t_lay
     if (object(obj_idx)->layer_config_ranges.count(range) == 0)
         return false;
 
+    auto& ranges = object(obj_idx)->layer_config_ranges;
+
+    // Orca: a raised top pushes up the ranges above rather than overlapping them.
+    std::vector<t_layer_height_range> old_ends;
+    for (const auto& r : ranges)
+        old_ends.push_back(r.first);
+    const std::vector<t_layer_height_range> new_ends = edited_layer_ranges(old_ends, range, new_range);
+    if (new_ends.empty())
+        return false;
+
     // BBS: remove snapeshot name "Edit Height Range"
     take_snapshot("");
 
     const ItemType sel_type = m_objects_model->GetItemType(GetSelection());
 
-    auto& ranges = object(obj_idx)->layer_config_ranges;
-
-    {
-        ModelConfig config = std::move(ranges[range]);
-        ranges.erase(range);
-        ranges[new_range] = std::move(config);
-    }
+    t_layer_config_ranges edited;
+    for (size_t i = 0; i < old_ends.size(); ++i)
+        edited[new_ends[i]] = std::move(ranges[old_ends[i]]);
+    ranges = std::move(edited);
 
     changed_object(obj_idx);
 
