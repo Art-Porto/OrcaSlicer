@@ -8,6 +8,7 @@
 #include "Plater.hpp"
 #include "MainFrame.hpp"
 #include "format.hpp"
+#include "GUI_Utils.hpp"
 
 #include "libslic3r/PrintConfig.hpp"
 
@@ -69,6 +70,7 @@
 #include <wx/listbook.h>
 #include <wx/tokenzr.h>
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/format.hpp>
 #include <wx/types.h>
 #include "OG_CustomCtrl.hpp"
 #include "MsgDialog.hpp"
@@ -103,12 +105,11 @@ wxString double_to_string(double const value, const int max_precision /*= 4*/)
 
 	wxString s = wxNumberFormatter::ToString(value, max_precision, wxNumberFormatter::Style_None);
 
-	// The following code comes from wxNumberFormatter::RemoveTrailingZeroes(wxString& s)
-	// with the exception that here one sets the decimal separator explicitely to dot.
+	// The following code comes from wxNumberFormatter::RemoveTrailingZeroes(wxString& s).
     // If number is in scientific format, trailing zeroes belong to the exponent and cannot be removed.
     if (s.find_first_of("eE") == wxString::npos) {
-        char dec_sep = is_decimal_separator_point() ? '.' : ',';
-        const size_t posDecSep = s.find(dec_sep);
+        // The separator ToString() wrote, from the UI locale, which can differ from the C locale's.
+        const size_t posDecSep = s.find(wxNumberFormatter::GetDecimalSeparator());
 	    // No decimal point => removing trailing zeroes irrelevant for integer number.
 	    if (posDecSep != wxString::npos) {
 		    // Find the last character to keep.
@@ -124,6 +125,14 @@ wxString double_to_string(double const value, const int max_precision /*= 4*/)
 	}
 
     return s;
+}
+
+bool string_to_double_any_separator(wxString str, double* value)
+{
+    // The text may carry the UI locale's separator or the C locale's, and the two can differ.
+    const char dec_sep = is_decimal_separator_point() ? '.' : ',';
+    str.Replace(dec_sep == '.' ? ',' : '.', dec_sep, false);
+    return str.ToDouble(value);
 }
 
 wxString get_thumbnail_string(const Vec2d& value)
@@ -1031,6 +1040,7 @@ void TextCtrl::BUILD() {
 		temp->SetBackgroundStyle(wxBG_STYLE_PAINT);
 #ifdef __WXOSX__
     text_ctrl->OSXDisableAllSmartSubstitutions(); // BBS
+    textctrl_disable_text_replacement(text_ctrl);
 #endif // __WXOSX__
 
 	temp->SetToolTip(get_tooltip_text(text_value));
@@ -2898,7 +2908,7 @@ void PointCtrl::set_auto_value(const Vec2d& value)
 		ctrls[axis]->SetHint(point_coordinate_text(value(axis)));
 		// A coordinate shown before the automatic value was known still reads as its number.
 		double shown;
-		if (ctrls[axis]->GetValue().ToDouble(&shown) && is_auto_coordinate(axis, shown))
+		if (string_to_double_any_separator(ctrls[axis]->GetValue(), &shown) && is_auto_coordinate(axis, shown))
 			ctrls[axis]->ChangeValue(wxString());
 	}
 }
@@ -2931,7 +2941,7 @@ boost::any& PointCtrl::get_value()
 			                                 m_opt.get_default_value<ConfigOptionPoint>()->value(axis);
 			return is_auto_coordinate(axis, value);
 		}
-		return ctrl->GetValue().ToDouble(&value);
+		return string_to_double_any_separator(ctrl->GetValue(), &value);
 	};
 	double x, y;
 	if (!read(x_textctrl, 0, x) ||
