@@ -75,14 +75,6 @@ inline int compute_colum_count(int count)
 }
 
 
-extern const float WIPE_TOWER_DEFAULT_X_POS;
-extern const float WIPE_TOWER_DEFAULT_Y_POS;  // Max y
-
-extern const float I3_WIPE_TOWER_DEFAULT_X_POS;
-extern const float I3_WIPE_TOWER_DEFAULT_Y_POS; // Max y
-
-
-
 namespace Slic3r {
 
 class Model;
@@ -878,6 +870,8 @@ class PartPlateList : public ObjectBase
     friend class PartPlate;
 
 public:
+    // Where a new plate puts the tower on the edited printer when its preset sets no position.
+    static Vec2d builtin_wipe_tower_position();
     void set_default_wipe_tower_pos_for_plate(int plate_idx, bool init_pos = false);
     class BedTextureInfo {
     public:

@@ -57,6 +57,24 @@ bool prime_tower_is_printed(const ConfigBase &config, PrintSequence print_sequen
     return !((used_filaments == 1 && !has_mixed_filament) || (print_sequence == PrintSequence::ByObject && num_instances > 1));
 }
 
+Vec2d builtin_wipe_tower_position(const ConfigBase &config)
+{
+    const ConfigOption *structure = option_of(config, "printer_structure");
+    if (structure != nullptr && structure->getInt() == int(PrinterStructure::psI3))
+        return Vec2d(0., 250.);
+    return Vec2d(165., 250.);
+}
+
+Vec2d default_wipe_tower_position(const ConfigBase &config, const Vec2d &builtin)
+{
+    Vec2d position = builtin;
+    if (const auto *own = dynamic_cast<const ConfigOptionPoint *>(option_of(config, "wipe_tower_default_position")))
+        for (int axis = 0; axis < 2; ++axis)
+            if (own->value(axis) > WIPE_TOWER_POSITION_AUTO + 0.5)
+                position(axis) = own->value(axis);
+    return position;
+}
+
 WipeTowerType resolve_wipe_tower_type(const ConfigBase &config)
 {
     // printer_model is what the CLI keys its Bambu Lab detection on; the GUI's vendor flag

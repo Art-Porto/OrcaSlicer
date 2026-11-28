@@ -348,6 +348,44 @@ TEST_CASE("A Bambu Lab printer always gets the Type1 planner", "[WipeTowerEstima
     CHECK(resolve_wipe_tower_type(config) == WipeTowerType::Type2);
 }
 
+static void check_position(const Vec2d &position, double x, double y)
+{
+    CHECK_THAT(position.x(), WithinAbs(x, 1e-9));
+    CHECK_THAT(position.y(), WithinAbs(y, 1e-9));
+}
+
+TEST_CASE("A new plate puts the tower where its structure does on each axis the printer leaves automatic", "[WipeTowerEstimate]") {
+    DynamicPrintConfig config = make_config();
+    config.set_deserialize_strict("printer_structure", "corexy");
+    const auto set_own = [&config](double x, double y) {
+        config.set_key_value("wipe_tower_default_position", new ConfigOptionPoint(Vec2d(x, y)));
+    };
+
+    SECTION("the built-in position: the back of the bed, at its left edge on a bed slinger") {
+        check_position(builtin_wipe_tower_position(config), 165., 250.);
+        config.set_deserialize_strict("printer_structure", "i3");
+        check_position(builtin_wipe_tower_position(config), 0., 250.);
+    }
+    SECTION("both axes automatic, as the option's default leaves them") {
+        set_own(WIPE_TOWER_POSITION_AUTO, WIPE_TOWER_POSITION_AUTO);
+        check_position(default_wipe_tower_position(config, builtin_wipe_tower_position(config)), 165., 250.);
+    }
+    SECTION("the printer's own X with an automatic Y") {
+        set_own(0., WIPE_TOWER_POSITION_AUTO);
+        check_position(default_wipe_tower_position(config, builtin_wipe_tower_position(config)), 0., 250.);
+    }
+    SECTION("the printer's own position on both axes, whatever its structure") {
+        set_own(0., 260.);
+        check_position(default_wipe_tower_position(config, builtin_wipe_tower_position(config)), 0., 260.);
+        config.set_deserialize_strict("printer_structure", "i3");
+        check_position(default_wipe_tower_position(config, builtin_wipe_tower_position(config)), 0., 260.);
+    }
+    SECTION("a config without the option, as an older project has") {
+        config.erase("wipe_tower_default_position");
+        check_position(default_wipe_tower_position(config, builtin_wipe_tower_position(config)), 165., 250.);
+    }
+}
+
 TEST_CASE("A dual nozzle purges every filament plus the filament change", "[WipeTowerEstimate]") {
     DynamicPrintConfig config = make_config();
     config.set_key_value("nozzle_diameter", new ConfigOptionFloats({0.4, 0.4}));
